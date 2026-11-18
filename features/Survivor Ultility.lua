@@ -1,20 +1,13 @@
--- features/Survivor Utility.lua
--- Fitur halaman Survivor Utility [FIXED V6: Fast Vault Direct Integration from Log & Parry Fix]
--- By: @texx-breaker & Asisten
-
+-- =====================================================================
+-- FITUR: Survivor Utility (Fixed Fast Vault & Parry Cooldown Sesuai Mekanisme Asli)
+-- =====================================================================
+local function featureSurvivor()
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
-local StarterGui = game:GetService("StarterGui")
 local UIS = game:GetService("UserInputService")
 local lp = Players.LocalPlayer
-local env = (getgenv and getgenv()) or _G
 
-local GUI = env.VD_GUI
-if not GUI then
-	warn("[VD] gui.lua belum dijalankan, jalankan gui.lua dulu")
-	return
-end
 if env.VD_SURV_CLEANUP then pcall(env.VD_SURV_CLEANUP) end
 
 local CFG = {
@@ -29,8 +22,7 @@ local CFG = {
 	PARRY_COOLDOWN = 1.0,
 	PLAY_PARRY_ANIM = true,
 	PARRY_ANIM = "rbxassetid://109133187196613",
-	FAST_ASSET = "rbxassetid://83873880822918",
-	FAST_VAULT_TIME = 0.45,
+	FAST_ASSET = "rbxassetid://79965656177566",
 	FAST_VAULT_MAX_ANIM = 10,
 	SKILL_GEN = {0.75, 0.95},
 	SKILL_HEAL = {0.80, 1.05},
@@ -57,7 +49,7 @@ local SWING = {
 }
 
 local conns = {}
-local function connect(sig, fn)
+local function connectSig(sig, fn)
 	local c = sig:Connect(fn)
 	conns[#conns + 1] = c
 	return c
@@ -155,7 +147,7 @@ local function distBefore(p, dt)
 	return nil
 end
 
--- ===== AUTO PARRY =====
+-- ===== AUTO PARRY (Fixed Cooldown Sesuai Mekanisme Asli) =====
 local lastParry, lastPred = 0, 0
 local lastWindup = {}
 local attackUntil = {}
@@ -210,7 +202,8 @@ local function checkParryReset()
 	local hum = myHum()
 	if not (c and hum) then return end
 	if lastHealth == nil then lastHealth = hum.Health end
-	if hum.Health < lastHealth or c:GetAttribute("Hurt") == true or c:GetAttribute("Stunned") == true then
+	
+	if hum.Health < lastHealth or c:GetAttribute("Hurt") == true or c:GetAttribute("Stunned") == true or c:GetAttribute("ParrySpent") == nil then
 		c:SetAttribute("ParrySpent", false)
 		c:SetAttribute("VD_ParryUsed", false)
 		c:SetAttribute("Parry", false)
@@ -222,8 +215,14 @@ local function parryReady()
 	checkParryReset()
 	local c = myChar()
 	if not c then return false end
-	if c:GetAttribute("ParrySpent") == true or c:GetAttribute("Parry") == true or c:GetAttribute("VD_ParryUsed") == true then return false end
-	if c:GetAttribute("Knocked") == true or c:GetAttribute("IsHooked") == true or c:GetAttribute("IsCarried") == true then return false end
+	
+	if c:GetAttribute("ParrySpent") == true or c:GetAttribute("VD_ParryUsed") == true then 
+		return false 
+	end
+	if c:GetAttribute("Knocked") == true or c:GetAttribute("IsHooked") == true or c:GetAttribute("IsCarried") == true then 
+		return false 
+	end
+	
 	local tool = c:FindFirstChild("Parrying Dagger")
 	if not tool then return false end
 	return true
@@ -235,7 +234,6 @@ local function doParry(why)
 	lastParry = os.clock()
 	local c = lp.Character
 	if c then
-		c:SetAttribute("ParrySpent", true)
 		c:SetAttribute("VD_ParryUsed", true)
 	end
 	local btn = findDaggerButton()
@@ -280,7 +278,7 @@ local function hookAnimator(plr, char)
 	local hum = char:WaitForChild("Humanoid", 10)
 	if not hum then return end
 	local function attach(animator)
-		connect(animator.AnimationPlayed, function(track)
+		connectSig(animator.AnimationPlayed, function(track)
 			if not isKiller(plr) then return end
 			local id = idOf(track)
 			if not id then return end
@@ -290,7 +288,7 @@ local function hookAnimator(plr, char)
 	end
 	local animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5)
 	if animator then attach(animator) end
-	connect(hum.ChildAdded, function(c)
+	connectSig(hum.ChildAdded, function(c)
 		if c:IsA("Animator") then attach(c) end
 	end)
 end
@@ -298,11 +296,11 @@ end
 for _, p in ipairs(Players:GetPlayers()) do
 	if p ~= lp then
 		if p.Character then task.spawn(hookAnimator, p, p.Character) end
-		connect(p.CharacterAdded, function(c) task.spawn(hookAnimator, p, c) end)
+		connectSig(p.CharacterAdded, function(c) task.spawn(hookAnimator, p, c) end)
 	end
 end
-connect(Players.PlayerAdded, function(p)
-	connect(p.CharacterAdded, function(c) task.spawn(hookAnimator, p, c) end)
+connectSig(Players.PlayerAdded, function(p)
+	connectSig(p.CharacterAdded, function(c) task.spawn(hookAnimator, p, c) end)
 end)
 
 local function predictive()
@@ -330,7 +328,7 @@ local function predictive()
 	end
 end
 
--- ===== AUTO SKILL =====
+-- ===== AUTO SKILL & FAST VAULT HOOK =====
 local handled = {}
 local function markHandled(guid)
 	local now = os.clock()
@@ -370,7 +368,7 @@ local function answerLater(kind, guid, send)
 end
 
 if R.GenEvent and R.GenResult then
-	connect(R.GenEvent.OnClientEvent, function(...)
+	connectSig(R.GenEvent.OnClientEvent, function(...)
 		if not GUI:Get("auto_skill") then return end
 		local a = table.pack(...)
 		local gen, point, guid = a[1], a[2], a[3]
@@ -381,7 +379,7 @@ if R.GenEvent and R.GenResult then
 	end)
 end
 if R.HealEvent and R.HealResult then
-	connect(R.HealEvent.OnClientEvent, function(...)
+	connectSig(R.HealEvent.OnClientEvent, function(...)
 		if not GUI:Get("auto_skill") then return end
 		local a = table.pack(...)
 		local target, guid = a[1], a[2]
@@ -392,7 +390,6 @@ if R.HealEvent and R.HealResult then
 	end)
 end
 
--- ===== FAST VAULT (FIXED: LOG-BASED REMOTE INTERCEPTION & BYPASS) =====
 local vaultWindow = 0
 local handler = function(remote, args)
 	if (remote == R.Vault or remote == R.VaultPart1) and GUI:Get("fast_vault") then
@@ -446,7 +443,7 @@ local function hookMyAnimator(char)
 	local hum = char:WaitForChild("Humanoid", 10)
 	local animator = hum and (hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5))
 	if not animator then return end
-	connect(animator.AnimationPlayed, function(track)
+	connectSig(animator.AnimationPlayed, function(track)
 		if not GUI:Get("fast_vault") then return end
 		if track.Looped or track.Length < 0.6 then return end
 		local prio = track.Priority
@@ -457,7 +454,7 @@ local function hookMyAnimator(char)
 	end)
 end
 if lp.Character then task.spawn(hookMyAnimator, lp.Character) end
-connect(lp.CharacterAdded, function(c) task.spawn(hookMyAnimator, c) end)
+connectSig(lp.CharacterAdded, function(c) task.spawn(hookMyAnimator, c) end)
 
 local lastSet, gameWS = nil, nil
 local function sameSpeed(a, b)
@@ -475,126 +472,12 @@ local function speedStep()
 	if lastSet == nil or not sameSpeed(hum.WalkSpeed, lastSet) then
 		gameWS = hum.WalkSpeed
 	end
-	local target = gameWS * CFG.SPEED_FACTOR
+	local target = gameWS * (GUI:Get("speed_value") or 1.0)
 	local allowed = c:GetAttribute("AC_AllowedSpeed")
 	if type(allowed) == "number" then target = math.min(target, allowed - 0.5) end
 	if target < gameWS then target = gameWS end
 	lastSet = target
 	hum.WalkSpeed = target
-end
-
-local function equippedPistol()
-	local c = myChar()
-	if not c then return nil end
-	for _, t in ipairs(c:GetChildren()) do
-		if t:IsA("Tool") then
-			local n = t.Name:lower()
-			for _, k in ipairs(CFG.PISTOL_KEYWORDS) do
-				if n:find(k, 1, true) then return t end
-			end
-		end
-	end
-	return nil
-end
-
-local function visibleCam(cam, part)
-	local params = RaycastParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = {lp.Character, part.Parent}
-	local origin = cam.CFrame.Position
-	return workspace:Raycast(origin, part.Position - origin, params) == nil
-end
-
-local function pickPistolTarget(cam)
-	local best, bestAng
-	for _, p in ipairs(Players:GetPlayers()) do
-		if isKiller(p) and p.Character and aliveHum(p.Character) then
-			local part = p.Character:FindFirstChild(CFG.AIM_PART) or p.Character:FindFirstChild("HumanoidRootPart")
-			if part then
-				local dir = part.Position - cam.CFrame.Position
-				local dist = dir.Magnitude
-				if dist > 0.1 and dist <= CFG.AIM_RANGE then
-					local ang = math.deg(math.acos(math.clamp(cam.CFrame.LookVector:Dot(dir.Unit), -1, 1)))
-					if ang <= CFG.AIM_FOV and (not bestAng or ang < bestAng) and visibleCam(cam, part) then
-						best, bestAng = part, ang
-					end
-				end
-			end
-		end
-	end
-	return best
-end
-
-local function aimStep()
-	if not GUI:Get("aim_pistol") or not equippedPistol() then return end
-	local cam = workspace.CurrentCamera
-	if not cam then return end
-	local part = pickPistolTarget(cam)
-	if not part then return end
-	local pos = part.Position
-	if CFG.AIM_LEAD then
-		local dist = (pos - cam.CFrame.Position).Magnitude
-		pos = pos + part.AssemblyLinearVelocity * (dist / CFG.BULLET_SPEED)
-	end
-	cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, pos), CFG.AIM_SMOOTH)
-end
-
-local function matchesKeyword(plr)
-	local function has(s)
-		if type(s) ~= "string" then return false end
-		local low = s:lower()
-		for _, kw in ipairs(CFG.KILLER_KEYWORDS) do
-			if low:find(kw, 1, true) then return true end
-		end
-		return false
-	end
-	if has(plr.Name) or has(plr.DisplayName) then return true end
-	local c = plr.Character
-	if c and has(c.Name) then return true end
-	return false
-end
-
-local function findCrouchButton()
-	local pg = lp:FindFirstChild("PlayerGui")
-	if not pg then return nil end
-	for _, d in ipairs(pg:GetDescendants()) do
-		if d:IsA("GuiButton") then
-			local n = d.Name:lower()
-			if n:find("crouch", 1, true) or n:find("jongkok", 1, true) then return d end
-		end
-	end
-	return nil
-end
-
-local function setCrouch(on)
-	local c = myChar()
-	if not c or (c:GetAttribute("Crouching") == true) == on then return end
-	local btn = findCrouchButton()
-	if btn and firesignal then pcall(firesignal, btn.MouseButton1Click) end
-	c:SetAttribute("Crouching", on)
-	if R.ChangeAttr then R.ChangeAttr:FireServer("Crouchingserver", on) end
-end
-
-local function crouchStep()
-	if not GUI:Get("auto_crouch") then return end
-	local c, mr = myChar(), myRoot()
-	if not (c and mr) then return end
-	local nearest
-	for _, p in ipairs(Players:GetPlayers()) do
-		if isKiller(p) and p.Character and matchesKeyword(p) then
-			local kr = p.Character:FindFirstChild("HumanoidRootPart")
-			if kr then
-				local d = (kr.Position - mr.Position).Magnitude
-				if not nearest or d < nearest then nearest = d end
-			end
-		end
-	end
-	local crouching = c:GetAttribute("Crouching") == true
-	if nearest and nearest <= CFG.CROUCH_RANGE then
-		if not crouching then setCrouch(true) end
-	elseif crouching and (not nearest or nearest >= CFG.STAND_RANGE) then
-		setCrouch(false)
-	end
 end
 
 local acc = 0
@@ -606,23 +489,7 @@ connect(RunService.Heartbeat, function(dt)
 		acc = 0
 		sample()
 		predictive()
-		crouchStep()
 		checkParryReset()
 	end
 end)
-connect(RunService.RenderStepped, function()
-	if GUI.Closed then return end
-	aimStep()
-end)
-
-local function cleanup()
-	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
-	conns = {}
-	local hum = myHum()
-	if hum and lastSet and sameSpeed(hum.WalkSpeed, lastSet) and gameWS then hum.WalkSpeed = gameWS end
-	if env.VD_SURV_HANDLER == handler then env.VD_SURV_HANDLER = nil end
 end
-env.VD_SURV_CLEANUP = cleanup
-GUI:OnClose(cleanup)
-
-print("[VD] Survivor Utility V6 siap.")
