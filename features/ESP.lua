@@ -1,18 +1,12 @@
--- features/ESP.lua
--- Halaman ESP: Generator memunculkan Nama + Progres (Tanpa Jarak), Pallet & Window highlight bersih tanpa kotak.
--- By: @texx-breaker & Asisten
-
+-- =====================================================================
+-- FITUR: ESP (Fixed Tembus Tembok / Highlight Objek & Progres Generator)
+-- =====================================================================
+local function featureESP()
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local lp = Players.LocalPlayer
-local env = (getgenv and getgenv()) or _G
 
-local GUI = env.VD_GUI
-if not GUI then
-	warn("[VD] gui.lua belum dijalankan, jalankan gui.lua dulu")
-	return
-end
 if env.VD_ESP_CLEANUP then pcall(env.VD_ESP_CLEANUP) end
 
 local CFG = {
@@ -24,7 +18,7 @@ local CFG = {
 
 local alive = true
 local conns = {}
-local function connect(sig, fn)
+local function connectSig(sig, fn)
 	local c = sig:Connect(fn)
 	conns[#conns + 1] = c
 	return c
@@ -72,7 +66,6 @@ local function inMatch()
 	return t ~= nil and (t.Name == "Survivors" or t.Name == "Killer")
 end
 
--- ===== ESP PEMAIN =====
 local players = {}
 
 local function dropPlayer(p)
@@ -112,7 +105,7 @@ local function updatePlayer(p, myR)
 		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 		hl.FillTransparency = 0.6
 		hl.OutlineTransparency = 0
-		hl.Parent = c
+		hl.Parent = folder
 		local bb, tl = makeLabel(c:FindFirstChild("Head") or root, 2.6)
 		e = {char = c, kind = kind, hl = hl, bb = bb, label = tl, color = nil}
 		players[p] = e
@@ -132,7 +125,6 @@ local function updatePlayer(p, myR)
 	end
 end
 
--- ===== ESP OBJEK =====
 local KINDS = {
 	gen = {toggle = "esp_generator", name = "Generator", y = 3, label = true},
 	pallet = {toggle = "esp_pallet"},
@@ -313,11 +305,11 @@ task.spawn(function()
 		if n % 3000 == 0 then task.wait() end
 	end
 end)
-connect(workspace.DescendantAdded, onInstance)
-connect(Players.PlayerRemoving, dropPlayer)
+connectSig(workspace.DescendantAdded, onInstance)
+connectSig(Players.PlayerRemoving, dropPlayer)
 
 local acc = 0
-connect(RunService.Heartbeat, function(dt)
+connectSig(RunService.Heartbeat, function(dt)
 	if GUI.Closed then return end
 	acc = acc + dt
 	if acc < CFG.UPDATE then return end
@@ -327,16 +319,4 @@ connect(RunService.Heartbeat, function(dt)
 	for _, p in ipairs(Players:GetPlayers()) do updatePlayer(p, myR) end
 	for model, e in pairs(entities) do updateObject(model, e, myR, match) end
 end)
-
-local function cleanup()
-	alive = false
-	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
-	conns = {}
-	for p in pairs(players) do dropPlayer(p) end
-	for model in pairs(entities) do dropObject(model) end
-	pcall(function() folder:Destroy() end)
 end
-env.VD_ESP_CLEANUP = cleanup
-GUI:OnClose(cleanup)
-
-print("[VD] ESP siap (Generator ber-nama/persen, Objek tanpa jarak)")
