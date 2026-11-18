@@ -1,6 +1,5 @@
 -- features/ESP.lua
--- Halaman ESP: Killer, Survivor, Pallet, Window, JTrap, Zombie, Generator (dengan progres persen).
--- Jarak tampil di label tiap pemain & objek. Jalankan SETELAH gui.lua. [FIXED VERSION]
+-- Halaman ESP: Highlight bersih tanpa balok persegi pada objek, tanpa teks nama/jarak objek.
 -- By: @texx-breaker & Asisten
 
 local Players = game:GetService("Players")
@@ -16,11 +15,11 @@ if not GUI then
 end
 if env.VD_ESP_CLEANUP then pcall(env.VD_ESP_CLEANUP) end
 
--- ===== pengaturan =====
 local CFG = {
-	UPDATE = 0.1,            -- detik antar pembaruan label dan jarak
-	OBJ_MAX_DIST = 300,      -- jarak maksimum untuk objek (pallet, window, generator, dll)
-	PROG_WORDS = {"progress", "percent", "repair", "charge", "completion"}, -- nama sumber progres generator
+	UPDATE = 0.1,
+	OBJ_MAX_DIST = 300,
+	OBJ_FILL = 0.4,
+	PROG_WORDS = {"progress", "percent", "repair", "charge", "completion"},
 }
 
 local alive = true
@@ -31,7 +30,6 @@ local function connect(sig, fn)
 	return c
 end
 
--- ===== folder tempat semua visual (lokal, tidak terlihat server) =====
 local parentGui = (gethui and gethui()) or CoreGui
 local oldFolder = parentGui:FindFirstChild("VDESP")
 if oldFolder then oldFolder:Destroy() end
@@ -74,7 +72,7 @@ local function inMatch()
 	return t ~= nil and (t.Name == "Survivors" or t.Name == "Killer")
 end
 
--- ===== ESP pemain (killer dan survivor, lengkap dengan jarak) =====
+-- ===== ESP PEMAIN (Killer & Survivor Tetap Ada Nama & Jarak) =====
 local players = {}
 
 local function dropPlayer(p)
@@ -134,20 +132,18 @@ local function updatePlayer(p, myR)
 	end
 end
 
--- ===== ESP objek (generator, pallet, window, jtrap, zombie dengan toggle terpisah) =====
+-- ===== ESP OBJEK (Tanpa Kotak Persegi, Tanpa Teks Nama/Jarak) =====
 local KINDS = {
-	gen = {toggle = "esp_generator", name = "Generator", y = 3},
-	pallet = {toggle = "esp_pallet", name = "Pallet", y = 2},
-	window = {toggle = "esp_window", name = "Window", y = 2},
-	trap = {toggle = "esp_jtrap", name = "JTrap", y = 2},
-	zombie = {toggle = "esp_zombie", name = "Zombie", y = 3.2},
+	gen = {toggle = "esp_generator"},
+	pallet = {toggle = "esp_pallet"},
+	window = {toggle = "esp_window"},
+	trap = {toggle = "esp_jtrap"},
+	zombie = {toggle = "esp_zombie"},
 }
 local entities = {}
-local diagWritten = false
 
 local function hideObject(e)
-	if e.box then pcall(function() e.box:Destroy() end) e.box = nil end
-	if e.bb then pcall(function() e.bb:Destroy() end) e.bb = nil end
+	if e.hl then pcall(function() e.hl:Destroy() end) e.hl = nil end
 	e.color = nil
 end
 
@@ -161,7 +157,7 @@ end
 
 local function addObject(kind, model)
 	if entities[model] or not model.Parent then return end
-	local e = {kind = kind, model = model, nextProg = 0}
+	local e = {kind = kind, model = model}
 	entities[model] = e
 	e.conn = model.AncestryChanged:Connect(function()
 		if not model:IsDescendantOf(workspace) then dropObject(model) end
@@ -176,64 +172,10 @@ local function mainPart(model)
 	return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
-local function looksLikeProgress(n)
-	n = n:lower()
-	for _, w in ipairs(CFG.PROG_WORDS) do
-		if n:find(w, 1, true) then return true end
-	end
-	return false
-end
-
-local function toPercent(v)
-	if type(v) ~= "number" then return nil end
-	if v >= 0 and v <= 1.0001 then return v * 100 end
-	if v > 1 and v <= 100 then return v end
-	return nil
-end
-
-local function findProgressSource(model)
-	for k, v in pairs(model:GetAttributes()) do
-		if looksLikeProgress(k) and toPercent(v) then return {t = "attr", inst = model, key = k} end
-	end
-	for _, d in ipairs(model:GetDescendants()) do
-		if (d:IsA("NumberValue") or d:IsA("IntValue")) and looksLikeProgress(d.Name) then
-			return {t = "val", inst = d}
-		end
-		for k, v in pairs(d:GetAttributes()) do
-			if looksLikeProgress(k) and toPercent(v) then return {t = "attr", inst = d, key = k} end
-		end
-		if d:IsA("TextLabel") and d.Text:match("%d+%.?%d*%%") then
-			return {t = "text", inst = d}
-		end
-	end
-	return nil
-end
-
-local function readProgress(src)
-	if not src or not src.inst or not src.inst.Parent then return nil end
-	if src.t == "attr" then return toPercent(src.inst:GetAttribute(src.key)) end
-	if src.t == "val" then return toPercent(src.inst.Value) end
-	local n = tonumber(src.inst.Text:match("(%d+%.?%d*)%%"))
-	if n and n <= 100 then return n end
-	return nil
-end
-
-local function writeDiag(model)
-	if diagWritten or not writefile then return end
-	diagWritten = true
-	local lines = {"Generator: " .. model:GetFullName()}
-	for k, v in pairs(model:GetAttributes()) do lines[#lines + 1] = "attr " .. k .. "=" .. tostring(v) end
-	local n = 0
-	for _, d in ipairs(model:GetDescendants()) do
-		n = n + 1
-		if n > 80 then break end
-		local extra = ""
-		if d:IsA("ValueBase") then extra = " = " .. tostring(d.Value) end
-		if d:IsA("TextLabel") then extra = " text=" .. d.Text end
-		lines[#lines + 1] = d.ClassName .. " " .. d.Name .. extra
-		for k, v in pairs(d:GetAttributes()) do lines[#lines + 1] = "  attr " .. k .. "=" .. tostring(v) end
-	end
-	pcall(writefile, "VD_GenInfo.txt", table.concat(lines, "\n"))
+local function resolveAdornee(model)
+	if model:IsA("BasePart") then return model end
+	local part = model:FindFirstChild("MeshPart") or model:FindFirstChild("Part") or model:FindFirstChildWhichIsA("BasePart", true)
+	return part or model
 end
 
 local function updateObject(model, e, myR, match)
@@ -254,36 +196,23 @@ local function updateObject(model, e, myR, match)
 		return
 	end
 	local color = GUI:Get(cfg.toggle .. "_color")
-	if not e.box then
-		local sb = Instance.new("SelectionBox")
-		sb.Adornee = model:IsA("PVInstance") and model or part
-		sb.LineThickness = 0.04
-		sb.SurfaceTransparency = 0.8
-		sb.Parent = folder
-		e.box = sb
-		local bb, tl = makeLabel(part, cfg.y)
-		e.bb, e.label = bb, tl
+	if not e.hl then
+		local hl = Instance.new("Highlight")
+		hl.Adornee = resolveAdornee(model)
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.FillTransparency = CFG.OBJ_FILL
+		hl.OutlineTransparency = 0
+		hl.Parent = folder
+		e.hl = hl
+		e.color = nil
 	end
 	if e.color ~= color then
 		e.color = color
-		e.box.Color3 = color
-		e.box.SurfaceColor3 = color
-		e.label.TextColor3 = labelColor(color)
+		e.hl.FillColor = color
+		e.hl.OutlineColor = color
 	end
-	local text = cfg.name
-	if e.kind == "gen" then
-		if not e.src and os.clock() >= e.nextProg then
-			e.nextProg = os.clock() + 3
-			e.src = findProgressSource(model)
-			if not e.src then writeDiag(model) end
-		end
-		local pct = readProgress(e.src)
-		if pct then text = string.format("%s %d%%", cfg.name, math.floor(pct + 0.5)) end
-	end
-	e.label.Text = string.format("%s  %dm", text, math.floor(d + 0.5))
 end
 
--- ===== deteksi objek di map (diperluas agar pallet & window tidak luput) =====
 local function onInstance(inst)
 	if inst:IsA("BasePart") then
 		local n = inst.Name
@@ -327,7 +256,6 @@ end)
 connect(workspace.DescendantAdded, onInstance)
 connect(Players.PlayerRemoving, dropPlayer)
 
--- ===== loop pembaruan =====
 local acc = 0
 connect(RunService.Heartbeat, function(dt)
 	if GUI.Closed then return end
@@ -340,7 +268,6 @@ connect(RunService.Heartbeat, function(dt)
 	for model, e in pairs(entities) do updateObject(model, e, myR, match) end
 end)
 
--- ===== bersihkan =====
 local function cleanup()
 	alive = false
 	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
@@ -352,4 +279,4 @@ end
 env.VD_ESP_CLEANUP = cleanup
 GUI:OnClose(cleanup)
 
-print("[VD] ESP siap")
+print("[VD] ESP siap (Highlight bersih tanpa kotak & tanpa teks objek)")
