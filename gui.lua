@@ -1,5 +1,5 @@
 -- =====================================================================
--- VD UTILITY - FINAL GUI (TOGGLE UTUH, SLIDER SPEED 0.1-3, MINIMIZE/CLOSE & LG ICON)
+-- VD UTILITY - FINAL GITHUB GUI (SLIDER 0.1-3, MINIMIZE, CLOSE, & LG ICON)
 -- =====================================================================
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -28,7 +28,7 @@ local T = {
 	knob = Color3.fromRGB(190, 200, 193),
 }
 
--- ===== HALAMAN & MENU UTUH =====
+-- ===== HALAMAN & MENU LENGKAP =====
 local PAGES = {
 	{
 		name = "Survivor", title = "Survivor Utility", icon = "person",
@@ -105,7 +105,7 @@ local function drawIcon(kind, parent, color)
 end
 
 -- Setup Window GUI
-local W, H = 420, 320
+local W, H = 420, 340
 local parentGui = (gethui and gethui()) or CoreGui
 local oldGui = parentGui:FindFirstChild("VDHub")
 if oldGui then oldGui:Destroy() end
@@ -305,7 +305,7 @@ task.spawn(function()
 							args[2].moving = true
 							args[2].speed = 2.0
 							args[2].power = 1.5
-							args[2].asset = "rbxassetid://79965656177"
+							args[2].asset = "rbxassetid://79965656177" --[span_0](start_span)[span_0](end_span)
 						end
 					end
 					return old(self, table.unpack(args, 1, args.n))
@@ -402,5 +402,5 @@ task.spawn(function()
 	end)
 end)
 
-print("[VD Utility] GUI Loaded Successfully!")
+print("[VD Utility] GitHub GUI Updated Successfully!")
 return GUI
