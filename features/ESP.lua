@@ -1,7 +1,7 @@
 -- features/ESP.lua
--- Halaman ESP: Killer, Survivor, Pallet dan Window, JTrap, Zombie, Generator (dengan progres persen).
--- Jarak killer dan survivor tampil di label tiap pemain. Jalankan SETELAH gui.lua.
--- By: @texx-breaker
+-- Halaman ESP: Killer, Survivor, Pallet, Window, JTrap, Zombie, Generator (dengan progres persen).
+-- Jarak tampil di label tiap pemain & objek. Jalankan SETELAH gui.lua. [FIXED VERSION]
+-- By: @texx-breaker & Asisten
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -134,11 +134,11 @@ local function updatePlayer(p, myR)
 	end
 end
 
--- ===== ESP objek (generator, pallet, window, jtrap, zombie) =====
+-- ===== ESP objek (generator, pallet, window, jtrap, zombie dengan toggle terpisah) =====
 local KINDS = {
 	gen = {toggle = "esp_generator", name = "Generator", y = 3},
-	pallet = {toggle = "esp_objects", name = "Pallet", y = 2},
-	window = {toggle = "esp_objects", name = "Window", y = 2},
+	pallet = {toggle = "esp_pallet", name = "Pallet", y = 2},
+	window = {toggle = "esp_window", name = "Window", y = 2},
 	trap = {toggle = "esp_jtrap", name = "JTrap", y = 2},
 	zombie = {toggle = "esp_zombie", name = "Zombie", y = 3.2},
 }
@@ -176,7 +176,6 @@ local function mainPart(model)
 	return model:FindFirstChildWhichIsA("BasePart", true)
 end
 
--- progres generator: nilai bisa berupa atribut, NumberValue, atau teks berisi persen
 local function looksLikeProgress(n)
 	n = n:lower()
 	for _, w in ipairs(CFG.PROG_WORDS) do
@@ -219,7 +218,6 @@ local function readProgress(src)
 	return nil
 end
 
--- kalau sumber progres tidak ketemu, simpan isi generator pertama biar bisa dicocokkan
 local function writeDiag(model)
 	if diagWritten or not writefile then return end
 	diagWritten = true
@@ -285,36 +283,30 @@ local function updateObject(model, e, myR, match)
 	e.label.Text = string.format("%s  %dm", text, math.floor(d + 0.5))
 end
 
--- ===== deteksi objek di map =====
-local seenNames = {}
-local nameLog = 0
-local function logName(inst)
-	local full = inst:GetFullName()
-	if seenNames[full] or nameLog >= 30 or not appendfile then return end
-	seenNames[full] = true
-	nameLog = nameLog + 1
-	pcall(appendfile, "VD_ESP_Names.txt", inst.ClassName .. " " .. full .. "\n")
-end
-
+-- ===== deteksi objek di map (diperluas agar pallet & window tidak luput) =====
 local function onInstance(inst)
 	if inst:IsA("BasePart") then
 		local n = inst.Name
+		local lowN = n:lower()
 		if n:sub(1, 14) == "GeneratorPoint" then
 			local m = inst.Parent
 			if m and m:IsA("Model") then addObject("gen", m) end
-		elseif n == "PalletPoint" then
-			local m = inst:FindFirstAncestor("Newpallet") or (inst.Parent and inst.Parent.Parent)
-			if m and m:IsA("Model") then addObject("pallet", m) end
-		elseif n == "VaultTrigger" then
+		elseif n == "PalletPoint" or lowN:find("pallet") then
+			local m = inst:FindFirstAncestor("Newpallet") or inst.Parent
+			if m and m:IsA("Model") then addObject("pallet", m) else addObject("pallet", inst) end
+		elseif n == "VaultTrigger" or n == "Window" or lowN:find("vault") or lowN:find("window") then
 			local m = inst.Parent
-			if m and m:IsA("Model") then addObject("window", m) end
+			if m and m:IsA("Model") then addObject("window", m) else addObject("window", inst) end
 		end
 	elseif inst:IsA("Model") then
 		local ln = inst.Name:lower()
 		if ln:find("jtrap", 1, true) or (ln:find("trap", 1, true) and inst:GetFullName():lower():find("jason", 1, true)) then
 			addObject("trap", inst)
+		elseif ln:find("window") or ln:find("vault") then
+			addObject("window", inst)
+		elseif ln:find("pallet") or ln:find("newpallet") then
+			addObject("pallet", inst)
 		end
-		if ln:find("trap", 1, true) or ln:find("zombie", 1, true) or ln:find("jason", 1, true) then logName(inst) end
 	elseif inst:IsA("Humanoid") then
 		local m = inst.Parent
 		if m and m:IsA("Model") and m.Name:lower():find("zombie", 1, true) and not Players:GetPlayerFromCharacter(m) then
