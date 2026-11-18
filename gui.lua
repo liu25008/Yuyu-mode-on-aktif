@@ -1,10 +1,5 @@
--- gui.lua | GUI + semua fitur dalam satu file (ESP, Killer Utility, Survivor Utility) [V3 FINAL FIX]
+-- gui.lua | GUI + semua fitur dalam satu file (ESP, Killer Utility, Survivor Utility) [ALL-IN-ONE FINAL]
 -- By: @texx-breaker & Asisten
---
--- Perbaikan utama V3:
--- 1. Auto Parry Logic: Menyesuaikan siklus cooldown dagger. Dagger sekarang mendeteksi ulang status 'ParrySpent' dan reset otomatis setelah karakter terkena hit (damage) dari killer, sehingga bisa aktif kembali berkali-kali dalam match.
--- 2. Auto Skill Timing: Auto skill tidak langsung instant-trigger di frame pertama, melainkan memberi jeda sepersekian detik yang natural supaya jarum penunjuk mendarat pas di kotak putih (zona perfect) sebelum mengirim hasil success.
--- 3. ESP Pallet & Window: Diperbaiki pencarian struktur nodenya agar tidak hilang. Pallet diberi warna Oranye Tua (`#C2620A`), dan Window diberi warna Biru Muda/Cyan (`#1EC8DC`).
 
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -641,31 +636,25 @@ selectPage(1)
 env.VD_GUI = GUI
 
 -- =====================================================================
--- FITUR: ESP (FIXED SEPARATE PALLET & WINDOW COLORS)
+-- FITUR: ESP (Pallet & Window Terpisah)
 -- =====================================================================
 local function featureESP()
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local lp = Players.LocalPlayer
-local env = (getgenv and getgenv()) or _G
 
-local GUI = env.VD_GUI
-if not GUI then return end
 if env.VD_ESP_CLEANUP then pcall(env.VD_ESP_CLEANUP) end
 
 local CFG = {
 	UPDATE = 0.1,
 	OBJ_MAX_DIST = 300,
-	OBJ_FILL = 0.35,
-	GEN_TEXT_SIZE = 16,
-	MAX_HIGHLIGHTS = 30,
 	PROG_WORDS = {"progress", "percent", "repair", "charge", "completion"},
 }
 
 local alive = true
 local conns = {}
-local function connect(sig, fn)
+local function connectSig(sig, fn)
 	local c = sig:Connect(fn)
 	conns[#conns + 1] = c
 	return c
@@ -682,10 +671,9 @@ local function labelColor(c)
 	return c:Lerp(Color3.new(1, 1, 1), 0.4)
 end
 
-local function makeLabel(adornee, yOff, textSize)
-	local ts = textSize or 13
+local function makeLabel(adornee, yOff)
 	local bb = Instance.new("BillboardGui")
-	bb.Size = UDim2.fromOffset(240, ts + 10)
+	bb.Size = UDim2.fromOffset(220, 20)
 	bb.StudsOffset = Vector3.new(0, yOff, 0)
 	bb.AlwaysOnTop = true
 	bb.MaxDistance = math.huge
@@ -695,7 +683,7 @@ local function makeLabel(adornee, yOff, textSize)
 	tl.Size = UDim2.new(1, 0, 1, 0)
 	tl.BackgroundTransparency = 1
 	tl.Font = Enum.Font.GothamMedium
-	tl.TextSize = ts
+	tl.TextSize = 13
 	tl.TextStrokeTransparency = 0.35
 	tl.TextStrokeColor3 = Color3.new(0, 0, 0)
 	tl.Text = ""
@@ -774,18 +762,17 @@ local function updatePlayer(p, myR)
 end
 
 local KINDS = {
-	gen = {toggle = "esp_generator", name = "Generator", y = 3, label = true, size = CFG.GEN_TEXT_SIZE},
-	pallet = {toggle = "esp_pallet", name = "Pallet"},
-	window = {toggle = "esp_window", name = "Window"},
-	trap = {toggle = "esp_jtrap", name = "JTrap", y = 2, label = true, size = 13},
-	zombie = {toggle = "esp_zombie", name = "Zombie", y = 3.2, label = true, size = 13},
+	gen = {toggle = "esp_generator", name = "Generator", y = 3},
+	pallet = {toggle = "esp_pallet", name = "Pallet", y = 2},
+	window = {toggle = "esp_window", name = "Window", y = 2},
+	trap = {toggle = "esp_jtrap", name = "JTrap", y = 2},
+	zombie = {toggle = "esp_zombie", name = "Zombie", y = 3.2},
 }
 local entities = {}
 
 local function hideObject(e)
-	if e.hl then pcall(function() e.hl:Destroy() end) e.hl = nil end
+	if e.box then pcall(function() e.box:Destroy() end) e.box = nil end
 	if e.bb then pcall(function() e.bb:Destroy() end) e.bb = nil end
-	e.label = nil
 	e.color = nil
 end
 
@@ -856,59 +843,40 @@ local function readProgress(src)
 	return nil
 end
 
-local function objectDistance(model, e, myR, match)
+local function updateObject(model, e, myR, match)
 	local cfg = KINDS[e.kind]
 	if not (match and GUI:Get(cfg.toggle)) or not model:IsDescendantOf(workspace) then
 		hideObject(e)
-		return nil
+		return
 	end
 	local part = e.part
 	if not part or not part.Parent then
 		part = mainPart(model)
 		e.part = part
 	end
-	if not part then
-		hideObject(e)
-		return nil
-	end
+	if not part then return end
 	local d = myR and (part.Position - myR.Position).Magnitude or 0
 	if d > CFG.OBJ_MAX_DIST then
 		hideObject(e)
-		return nil
+		return
 	end
-	return d
-end
-
-local function resolveAdornee(model)
-	if model:IsA("BasePart") then return model end
-	local part = model:FindFirstChild("MeshPart") or model:FindFirstChild("Part") or model:FindFirstChildWhichIsA("BasePart", true)
-	return part or model
-end
-
-local function showObject(model, e)
-	local cfg = KINDS[e.kind]
 	local color = GUI:Get(cfg.toggle .. "_color")
-	if not e.hl then
-		local hl = Instance.new("Highlight")
-		hl.Adornee = resolveAdornee(model)
-		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
-		hl.FillTransparency = CFG.OBJ_FILL
-		hl.OutlineTransparency = 0
-		hl.Parent = folder
-		e.hl = hl
-		if cfg.label then
-			local bb, tl = makeLabel(e.part, cfg.y, cfg.size)
-			e.bb, e.label = bb, tl
-		end
-		e.color = nil
+	if not e.box then
+		local sb = Instance.new("SelectionBox")
+		sb.Adornee = model:IsA("PVInstance") and model or part
+		sb.LineThickness = 0.04
+		sb.SurfaceTransparency = 0.8
+		sb.Parent = folder
+		e.box = sb
+		local bb, tl = makeLabel(part, cfg.y)
+		e.bb, e.label = bb, tl
 	end
 	if e.color ~= color then
 		e.color = color
-		e.hl.FillColor = color
-		e.hl.OutlineColor = color
-		if e.label then e.label.TextColor3 = labelColor(color) end
+		e.box.Color3 = color
+		e.box.SurfaceColor3 = color
+		e.label.TextColor3 = labelColor(color)
 	end
-	if not e.label then return end
 	local text = cfg.name
 	if e.kind == "gen" then
 		if not e.src and os.clock() >= e.nextProg then
@@ -918,45 +886,7 @@ local function showObject(model, e)
 		local pct = readProgress(e.src)
 		if pct then text = string.format("%s %d%%", cfg.name, math.floor(pct + 0.5)) end
 	end
-	e.label.Text = text
-end
-
-local function updateObjects(myR, match, budget)
-	local byKind = {}
-	for model, e in pairs(entities) do
-		local d = objectDistance(model, e, myR, match)
-		if d then
-			local l = byKind[e.kind]
-			if not l then
-				l = {}
-				byKind[e.kind] = l
-			end
-			l[#l + 1] = {model = model, e = e, d = d}
-		end
-	end
-	local lists = {}
-	for _, l in pairs(byKind) do
-		table.sort(l, function(a, b) return a.d < b.d end)
-		lists[#lists + 1] = {items = l, i = 1}
-	end
-	local shown = 0
-	local progress = true
-	while progress do
-		progress = false
-		for _, L in ipairs(lists) do
-			local it = L.items[L.i]
-			if it then
-				L.i = L.i + 1
-				progress = true
-				if shown < budget then
-					shown = shown + 1
-					showObject(it.model, it.e)
-				else
-					hideObject(it.e)
-				end
-			end
-		end
-	end
+	e.label.Text = string.format("%s  %dm", text, math.floor(d + 0.5))
 end
 
 local function onInstance(inst)
@@ -999,11 +929,11 @@ task.spawn(function()
 		if n % 3000 == 0 then task.wait() end
 	end
 end)
-connect(workspace.DescendantAdded, onInstance)
-connect(Players.PlayerRemoving, dropPlayer)
+connectSig(workspace.DescendantAdded, onInstance)
+connectSig(Players.PlayerRemoving, dropPlayer)
 
 local acc = 0
-connect(RunService.Heartbeat, function(dt)
+connectSig(RunService.Heartbeat, function(dt)
 	if GUI.Closed then return end
 	acc = acc + dt
 	if acc < CFG.UPDATE then return end
@@ -1011,9 +941,7 @@ connect(RunService.Heartbeat, function(dt)
 	local myR = myRoot()
 	local match = inMatch()
 	for _, p in ipairs(Players:GetPlayers()) do updatePlayer(p, myR) end
-	local used = 0
-	for _ in pairs(players) do used = used + 1 end
-	updateObjects(myR, match, math.max(0, CFG.MAX_HIGHLIGHTS - used))
+	for model, e in pairs(entities) do updateObject(model, e, myR, match) end
 end)
 
 local function cleanup()
@@ -1036,10 +964,7 @@ local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local lp = Players.LocalPlayer
-local env = (getgenv and getgenv()) or _G
 
-local GUI = env.VD_GUI
-if not GUI then return end
 if env.VD_KILL_CLEANUP then pcall(env.VD_KILL_CLEANUP) end
 
 local PROFILES = {
@@ -1055,7 +980,7 @@ local FACE_TIME = 0.45
 
 local alive = true
 local conns = {}
-local function connect(sig, fn)
+local function connectSig(sig, fn)
 	local c = sig:Connect(fn)
 	conns[#conns + 1] = c
 	return c
@@ -1198,7 +1123,7 @@ if not env.VD_KILL_HOOKED then
 	end
 end
 
-connect(RunService.RenderStepped, function()
+connectSig(RunService.RenderStepped, function()
 	if GUI.Closed then return end
 	local _, prof = active()
 	if not prof or not imKiller() then return end
@@ -1235,7 +1160,7 @@ GUI:OnClose(cleanup)
 end
 
 -- =====================================================================
--- FITUR: Survivor Utility (FIXED PARRY RE-ARM & AUTO SKILL TIMING)
+-- FITUR: Survivor Utility (Auto Parry Hit Reset & Timed Auto Skill)
 -- =====================================================================
 local function featureSurvivor()
 local Players = game:GetService("Players")
@@ -1243,10 +1168,7 @@ local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local lp = Players.LocalPlayer
-local env = (getgenv and getgenv()) or _G
 
-local GUI = env.VD_GUI
-if not GUI then return end
 if env.VD_SURV_CLEANUP then pcall(env.VD_SURV_CLEANUP) end
 
 local CFG = {
@@ -1266,7 +1188,7 @@ local CFG = {
 	FAST_VAULT_MAX_ANIM = 10,
 	SKILL_ABORT_DIST = 25,
 	NEEDLE_OFFSET = 0,
-	SKILL_GEN = {0.75, 0.95},  -- Waktu tunda proporsional agar jarum mendarat natural di zona putih/perfect
+	SKILL_GEN = {0.75, 0.95},
 	SKILL_HEAL = {0.80, 1.05},
 	SKILL_INSTAN = {0.02, 0.05},
 	PISTOL_KEYWORDS = {"pistol", "gun", "revolver", "handgun"},
@@ -1293,7 +1215,7 @@ local SWING = {
 }
 
 local conns = {}
-local function connect(sig, fn)
+local function connectSig(sig, fn)
 	local c = sig:Connect(fn)
 	conns[#conns + 1] = c
 	return c
@@ -1398,7 +1320,6 @@ local function distBefore(p, dt)
 	return nil
 end
 
--- ===== AUTO PARRY (FIXED COOLDOWN & HIT RESET CYCLE) =====
 local lastParry, lastPred = 0, 0
 local lastWindup = {}
 local attackUntil = {}
@@ -1417,14 +1338,12 @@ local function playAnimOnMe(assetId)
 	end)
 end
 
--- Cek apakah dagger siap dan belum habis dipakai, ATAU di-reset jika karakter baru kena hit
 local function parryReady()
 	local c = myChar()
 	if not c or not R.Parry then return false end
 	local hum = myHum()
 	if hum then
 		if lastHealth == nil then lastHealth = hum.Health end
-		-- Jika darah berkurang (artinya kena hit killer), reset status terpakai dagger supaya aktif kembali
 		if hum.Health < lastHealth then
 			c:SetAttribute("ParrySpent", false)
 			c:SetAttribute("VD_ParryUsed", false)
@@ -1483,7 +1402,7 @@ local function hookAnimator(plr, char)
 	local hum = char:WaitForChild("Humanoid", 10)
 	if not hum then return end
 	local function attach(animator)
-		connect(animator.AnimationPlayed, function(track)
+		connectSig(animator.AnimationPlayed, function(track)
 			if not isKiller(plr) then return end
 			local id = idOf(track)
 			if not id then return end
@@ -1493,7 +1412,7 @@ local function hookAnimator(plr, char)
 	end
 	local animator = hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5)
 	if animator then attach(animator) end
-	connect(hum.ChildAdded, function(c)
+	connectSig(hum.ChildAdded, function(c)
 		if c:IsA("Animator") then attach(c) end
 	end)
 end
@@ -1501,11 +1420,11 @@ end
 for _, p in ipairs(Players:GetPlayers()) do
 	if p ~= lp then
 		if p.Character then task.spawn(hookAnimator, p, p.Character) end
-		connect(p.CharacterAdded, function(c) task.spawn(hookAnimator, p, c) end)
+		connectSig(p.CharacterAdded, function(c) task.spawn(hookAnimator, p, c) end)
 	end
 end
-connect(Players.PlayerAdded, function(p)
-	connect(p.CharacterAdded, function(c) task.spawn(hookAnimator, p, c) end)
+connectSig(Players.PlayerAdded, function(p)
+	connectSig(p.CharacterAdded, function(c) task.spawn(hookAnimator, p, c) end)
 end)
 
 local function predictive()
@@ -1533,13 +1452,12 @@ local function predictive()
 	end
 end
 
--- ===== AUTO SKILL (FIXED TIMING FOR PERFECT WHITE ZONE) =====
 local handled = {}
 local function markHandled(guid)
 	local now = os.clock()
-	handled[guid] = {t = now, drops = 0}
-	for k, h in pairs(handled) do
-		if now - h.t > 30 then handled[k] = nil end
+	handled[guid] = now
+	for k, t in pairs(handled) do
+		if now - t > 30 then handled[k] = nil end
 	end
 end
 
@@ -1559,7 +1477,7 @@ local function playerLeaving()
 	return false
 end
 
-local function answerLater(kind, target, guid, send)
+local function answerLater(kind, guid, send)
 	task.spawn(function()
 		local untilT = os.clock() + skillDelay(kind)
 		while os.clock() < untilT do
@@ -1575,24 +1493,23 @@ local function answerLater(kind, target, guid, send)
 end
 
 if R.GenEvent and R.GenResult then
-	connect(R.GenEvent.OnClientEvent, function(...)
+	connectSig(R.GenEvent.OnClientEvent, function(...)
 		if not GUI:Get("auto_skill") then return end
 		local a = table.pack(...)
 		local gen, point, guid = a[1], a[2], a[3]
 		if typeof(gen) ~= "Instance" or type(guid) ~= "string" then return end
-		answerLater("gen", gen, guid, function()
+		answerLater("gen", guid, function()
 			R.GenResult:FireServer("success", 1, gen, point, guid, lp.Character)
 		end)
 	end)
 end
-
 if R.HealEvent and R.HealResult then
-	connect(R.HealEvent.OnClientEvent, function(...)
+	connectSig(R.HealEvent.OnClientEvent, function(...)
 		if not GUI:Get("auto_skill") then return end
 		local a = table.pack(...)
 		local target, guid = a[1], a[2]
 		if typeof(target) ~= "Instance" or type(guid) ~= "string" then return end
-		answerLater("heal", target, guid, function()
+		answerLater("heal", guid, function()
 			R.HealResult:FireServer("success", 1, target, guid, lp.Character)
 		end)
 	end)
@@ -1600,17 +1517,17 @@ end
 
 local vaultWindow = 0
 local handler = function(remote, args)
-	if GUI:Get("fast_vault") and (remote == R.Vault or remote == R.Traversal or remote == R.FastVault) then
-		if remote == R.Vault then
-			if args.n >= 5 then
-				args[2] = true
-				args[5] = "fast"
-				vaultWindow = os.clock() + 1.5
-				task.defer(function()
-					if R.FastVault then R.FastVault:FireServer(lp) end
-				end)
-			end
-		elseif remote == R.Traversal and args[1] == "start" and type(args[2]) == "table" then
+	if remote == R.Vault and GUI:Get("fast_vault") then
+		if args.n >= 5 and type(args[3]) == "string" and args[5] ~= "fast" then
+			args[2] = true
+			args[5] = "fast"
+			vaultWindow = os.clock() + 1.5
+			task.defer(function()
+				if R.FastVault then R.FastVault:FireServer(lp) end
+			end)
+		end
+	elseif remote == R.Traversal and GUI:Get("fast_vault") then
+		if args[1] == "start" and type(args[2]) == "table" then
 			args[2].moving = true
 			args[2].speed = 1.2
 			args[2].power = 1.5
@@ -1618,11 +1535,7 @@ local handler = function(remote, args)
 		end
 	elseif remote == R.GenResult or remote == R.HealResult then
 		local guid = (remote == R.GenResult) and args[5] or args[4]
-		local h = type(guid) == "string" and handled[guid]
-		if h and h.drops < 1 then
-			h.drops = h.drops + 1
-			return "drop"
-		end
+		if type(guid) == "string" and handled[guid] then return "drop" end
 	end
 	return nil
 end
@@ -1652,7 +1565,7 @@ local function hookMyAnimator(char)
 	local hum = char:WaitForChild("Humanoid", 10)
 	local animator = hum and (hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5))
 	if not animator then return end
-	connect(animator.AnimationPlayed, function(track)
+	connectSig(animator.AnimationPlayed, function(track)
 		if not GUI:Get("fast_vault") then return end
 		if track.Looped or track.Length < 0.6 then return end
 		local prio = track.Priority
@@ -1663,7 +1576,7 @@ local function hookMyAnimator(char)
 	end)
 end
 if lp.Character then task.spawn(hookMyAnimator, lp.Character) end
-connect(lp.CharacterAdded, function(c) task.spawn(hookMyAnimator, c) end)
+connectSig(lp.CharacterAdded, function(c) task.spawn(hookMyAnimator, c) end)
 
 local lastSet, gameWS = nil, nil
 local function sameSpeed(a, b)
@@ -1681,7 +1594,10 @@ local function speedStep()
 	if lastSet == nil or not sameSpeed(hum.WalkSpeed, lastSet) then
 		gameWS = hum.WalkSpeed
 	end
-	local target = gameWS + (tonumber(GUI:Get("speed_value")) or 1)
+	local target = gameWS * CFG.SPEED_FACTOR
+	local allowed = c:GetAttribute("AC_AllowedSpeed")
+	if type(allowed) == "number" then target = math.min(target, allowed - 0.5) end
+	if target < gameWS then target = gameWS end
 	lastSet = target
 	hum.WalkSpeed = target
 end
@@ -1802,7 +1718,7 @@ local function crouchStep()
 end
 
 local acc = 0
-connect(RunService.Heartbeat, function(dt)
+connectSig(RunService.Heartbeat, function(dt)
 	if GUI.Closed then return end
 	speedStep()
 	acc = acc + dt
@@ -1813,7 +1729,7 @@ connect(RunService.Heartbeat, function(dt)
 		crouchStep()
 	end
 end)
-connect(RunService.RenderStepped, function()
+connectSig(RunService.RenderStepped, function()
 	if GUI.Closed then return end
 	aimStep()
 end)
@@ -1829,15 +1745,10 @@ env.VD_SURV_CLEANUP = cleanup
 GUI:OnClose(cleanup)
 end
 
-local FEATURES = {
-	{"ESP", featureESP},
-	{"Killer Utility", featureKiller},
-	{"Survivor Utility", featureSurvivor},
-}
-for _, f in ipairs(FEATURES) do
-	task.spawn(function()
-		pcall(f[2])
-	end)
-end
+-- Eksekusi modul secara serentak
+task.spawn(function() pcall(featureESP) end)
+task.spawn(function() pcall(featureKiller) end)
+task.spawn(function() pcall(featureSurvivor) end)
 
+print("[VD Utility] Berhasil disuntikkan penuh!")
 return GUI
