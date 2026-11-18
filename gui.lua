@@ -1,5 +1,5 @@
 -- =====================================================================
--- VD UTILITY - ALL-IN-ONE FINAL GUI & FEATURES (UPDATED)
+-- VD UTILITY - ALL-IN-ONE FINAL GUI & FEATURES (FIXED RENDER)
 -- =====================================================================
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -19,7 +19,6 @@ local T = {
 	bg = Color3.fromRGB(10, 13, 11),
 	side = Color3.fromRGB(13, 17, 14),
 	surface = Color3.fromRGB(19, 25, 21),
-	surfaceHi = Color3.fromRGB(26, 34, 29),
 	line = Color3.fromRGB(33, 44, 37),
 	accent = Color3.fromRGB(30, 112, 64),
 	accentSoft = Color3.fromRGB(78, 164, 108),
@@ -27,28 +26,27 @@ local T = {
 	muted = Color3.fromRGB(125, 141, 130),
 	off = Color3.fromRGB(42, 52, 46),
 	knob = Color3.fromRGB(190, 200, 193),
-	danger = Color3.fromRGB(110, 38, 38),
 }
 
 -- ===== HALAMAN & MENU =====
 local PAGES = {
 	{
-		name = "Survivor", title = "Survivor Utility", sub = "Fitur untuk sisi survivor", icon = "person",
+		name = "Survivor", title = "Survivor Utility", icon = "person",
 		rows = {
-			{kind = "toggle", id = "auto_parry", label = "Auto Parry (Dagger)", desc = "Tangkis serangan killer otomatis"},
-			{kind = "toggle", id = "fast_vault", label = "Fast Vault", desc = "Lewati jendela lebih cepat (Bypass Alignment)"},
-			{kind = "toggle", id = "speed_boost", label = "Speed Boost", desc = "Tambahan kecepatan jalan"},
+			{kind = "toggle", id = "auto_parry", label = "Auto Parry (Dagger)"},
+			{kind = "toggle", id = "fast_vault", label = "Fast Vault"},
+			{kind = "toggle", id = "speed_boost", label = "Speed Boost"},
 			{kind = "slider", id = "speed_value", label = "Kecepatan tambahan", min = 0.1, max = 3.0, default = 1.0},
-			{kind = "toggle", id = "auto_skill", label = "Auto Skill", desc = "Skill check generator dan heal otomatis"},
+			{kind = "toggle", id = "auto_skill", label = "Auto Skill"},
 		},
 	},
 	{
-		name = "ESP", title = "ESP", sub = "Highlight tembus tembok untuk objek & pemain", icon = "eye",
+		name = "ESP", title = "ESP", icon = "eye",
 		rows = {
-			{kind = "toggle", id = "esp_killer", label = "Killer", color = Color3.fromRGB(139, 26, 26)},
-			{kind = "toggle", id = "esp_survivor", label = "Survivor", color = Color3.fromRGB(26, 52, 139)},
-			{kind = "toggle", id = "esp_window", label = "Window / Vault", color = Color3.fromRGB(30, 200, 220)},
-			{kind = "toggle", id = "esp_generator", label = "Generator", color = Color3.fromRGB(222, 100, 160)},
+			{kind = "toggle", id = "esp_killer", label = "Killer"},
+			{kind = "toggle", id = "esp_survivor", label = "Survivor"},
+			{kind = "toggle", id = "esp_window", label = "Window / Vault"},
+			{kind = "toggle", id = "esp_generator", label = "Generator"},
 		},
 	},
 }
@@ -78,17 +76,13 @@ local function drawIcon(kind, parent, color)
 		if radius then round(f, radius) end
 		return f
 	end
-	local function ring(size, pos, radius, th)
-		local f = new("Frame", {Size = size, Position = pos, BackgroundTransparency = 1, BorderSizePixel = 0}, box)
-		round(f, radius)
-		stroke(f, color, th)
-		return f
-	end
 	if kind == "person" then
 		part(UDim2.fromOffset(7, 7), UDim2.fromOffset(5, 1), 4)
 		part(UDim2.fromOffset(14, 8), UDim2.fromOffset(2, 10), 4)
 	else
-		ring(UDim2.fromOffset(18, 10), UDim2.fromOffset(0, 4), 5, 2)
+		local ring = new("Frame", {Size = UDim2.fromOffset(18, 10), Position = UDim2.fromOffset(0, 4), BackgroundTransparency = 1}, box)
+		round(ring, 5)
+		stroke(ring, color, 2)
 		part(UDim2.fromOffset(6, 6), UDim2.fromOffset(6, 6), 3)
 	end
 	return box
@@ -118,13 +112,7 @@ function GUI:Set(id, value, silent)
 	if not silent then fire(id, value) end
 end
 
-function GUI:OnChanged(id, fn)
-	listeners[id] = listeners[id] or {}
-	table.insert(listeners[id], fn)
-end
-
 -- Setup Window GUI
-local cam = workspace.CurrentCamera
 local W, H = 420, 320
 local parentGui = (gethui and gethui()) or CoreGui
 local oldGui = parentGui:FindFirstChild("VDHub")
@@ -190,27 +178,21 @@ local function buildSlider(parent, spec, order)
 	local function update(input)
 		local pos = math.clamp((input.Position.X - sliderBar.AbsolutePosition.X) / sliderBar.AbsoluteSize.X, 0, 1)
 		local val = spec.min + (spec.max - spec.min) * pos
-		val = math.floor(val * 10 + 0.5) / 10 -- Pembulatan 1 desimal (0.1)
+		val = math.floor(val * 10 + 0.5) / 10
 		GUI:Set(spec.id, val)
 	end
 
 	connect(btn.InputBegan, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			dragging = true
-		end
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = true end
 	end)
 	connect(UIS.InputEnded, function(i)
-		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-			dragging = false
-		end
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then dragging = false end
 	end)
 	connect(UIS.InputChanged, function(i)
-		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-			update(i)
-		end
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then update(i) end
 	end)
 
-	register(spec.id, spec.default, function(v, instant)
+	register(spec.id, spec.default, function(v)
 		local pct = math.clamp((v - spec.min) / (spec.max - spec.min), 0, 1)
 		fill.Size = UDim2.new(pct, 0, 1, 0)
 		valLbl.Text = string.format("%.1f", v)
@@ -223,7 +205,7 @@ for idx, page in ipairs(PAGES) do
 	local scroll = new("ScrollingFrame", {Position = UDim2.fromOffset(10, 10), Size = UDim2.new(1, -20, 1, -20), BackgroundTransparency = 1, CanvasSize = UDim2.new(0,0,0,0), AutomaticCanvasSize = Enum.AutomaticSize.Y}, pg)
 	new("UIListLayout", {Padding = UDim.new(0, 6), SortOrder = Enum.SortOrder.LayoutOrder}, scroll)
 
-	for order, spec in enumerateVectorSafe(page.rows) do
+	for order, spec in ipairs(page.rows) do
 		if spec.kind == "toggle" then buildToggle(scroll, spec, order)
 		elseif spec.kind == "slider" then buildSlider(scroll, spec, order) end
 	end
@@ -232,11 +214,6 @@ for idx, page in ipairs(PAGES) do
 	drawIcon(page.icon, tab, T.muted)
 	local lbl = new("TextLabel", {Size = UDim2.new(1, -38, 1, 0), Position = UDim2.fromOffset(34, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = T.muted, TextXAlignment = Enum.TextXAlignment.Left, Text = page.name}, tab)
 	pageObjs[idx] = {frame = pg, tab = tab, label = lbl, y = 10 + (idx-1)*46}
-end
-
--- Helper iterator pengganti enumerateVectorSafe bawaan sandbox
-function enumerateVectorSafe(tbl)
-	return ipairs(tbl)
 end
 
 local function selectPage(i)
@@ -254,15 +231,11 @@ selectPage(1)
 local draggingWindow, startInput, startWindowPos
 connect(header.InputBegan, function(i)
 	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-		draggingWindow = true
-		startInput = i.Position
-		startWindowPos = root.Position
+		draggingWindow = true; startInput = i.Position; startWindowPos = root.Position
 	end
 end)
 connect(UIS.InputEnded, function(i)
-	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-		draggingWindow = false
-	end
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then draggingWindow = false end
 end)
 connect(UIS.InputChanged, function(i)
 	if draggingWindow and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
@@ -272,13 +245,13 @@ connect(UIS.InputChanged, function(i)
 end)
 
 -- =====================================================================
--- INJEKSI FITUR: SURVIVOR UTILITY (Auto Skill, Fast Vault, Speed Slider)
+-- INJEKSI FITUR: SURVIVOR UTILITY & ESP
 -- =====================================================================
 task.spawn(function()
 	local playerGui = lp:WaitForChild("PlayerGui", 5)
 	if not playerGui then return end
 
-	-- 1. Auto Skill / Generator
+	-- Auto Skill
 	RunService.Heartbeat:Connect(function()
 		if not GUI:Get("auto_skill") then return end
 		pcall(function()
@@ -294,7 +267,7 @@ task.spawn(function()
 		end)
 	end)
 
-	-- 2. Fast Vault & Traversal Remote
+	-- Fast Vault
 	local RemotesFolder = RS:WaitForChild("Remotes", 15)
 	if RemotesFolder and hookmetamethod and getnamecallmethod and newcclosure then
 		local vaultEvent = RemotesFolder:FindFirstChild("Window") and RemotesFolder.Window:FindFirstChild("VaultEvent")
@@ -328,7 +301,7 @@ task.spawn(function()
 		end))
 	end
 
-	-- 3. Speed Boost Slider Handler (0.1 - 3.0)
+	-- Speed Boost Slider Handler
 	local lastSet, gameWS = nil, nil
 	local function sameSpeed(a, b) return b ~= nil and math.abs(a - b) < 0.02 end
 
@@ -349,7 +322,6 @@ task.spawn(function()
 
 		local multiplier = GUI:Get("speed_value") or 1.0
 		local target = gameWS * multiplier
-
 		local allowed = c:GetAttribute("AC_AllowedSpeed")
 		if type(allowed) == "number" then target = math.min(target, allowed - 0.5) end
 		if target < gameWS then target = gameWS end
@@ -359,19 +331,15 @@ task.spawn(function()
 	end)
 end)
 
--- =====================================================================
--- INJEKSI FITUR: ESP LENGKAP (Killer, Survivor, Window, Generator)
--- =====================================================================
+-- ESP Handler
 task.spawn(function()
 	local function applyHighlight(targetModel, color, toggleKey)
 		local enabled = GUI:Get(toggleKey)
 		local existing = targetModel:FindFirstChild("VD_HL")
-		
 		if not enabled then
 			if existing then existing:Destroy() end
 			return
 		end
-		
 		if targetModel and not existing then
 			local hl = Instance.new("Highlight")
 			hl.Name = "VD_HL"
@@ -387,7 +355,6 @@ task.spawn(function()
 
 	RunService.Heartbeat:Connect(function()
 		pcall(function()
-			-- ESP Player
 			for _, p in ipairs(Players:GetPlayers()) do
 				if p ~= lp and p.Character then
 					local team = p.Team
@@ -402,7 +369,6 @@ task.spawn(function()
 				end
 			end
 
-			-- ESP Objek Map
 			local map = workspace:FindFirstChild("Map")
 			if map then
 				local vaults = map:FindFirstChild("Vaults")
@@ -411,7 +377,6 @@ task.spawn(function()
 						applyHighlight(win, Color3.fromRGB(30, 200, 220), "esp_window")
 					end
 				end
-				
 				local gens = map:FindFirstChild("Generators") or map:FindFirstChild("new Generators")
 				if gens then
 					for _, gen in ipairs(gens:GetChildren()) do
@@ -423,5 +388,5 @@ task.spawn(function()
 	end)
 end)
 
-print("[VD Utility] GUI Updated & Loaded Successfully!")
+print("[VD Utility] GUI Loaded Successfully!")
 return GUI
