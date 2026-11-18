@@ -1,15 +1,17 @@
--- features/Survivor Ultility.lua
--- Fitur halaman Survivor Utility. Jalankan SETELAH gui.lua.
--- By: @texx-breaker
+-- features/Survivor Utility.lua
+-- Fitur halaman Survivor Utility. Jalankan SETELAH gui.lua. [FIXED VERSION]
+-- By: @texx-breaker & Asisten
 --
--- Isi: Auto Parry (Dagger) + mode, Anti Fake Hit, Fast Vault, Speed Boost,
---      Auto Skill (Perfect / Instan), Aimbot Pistol, Auto Jongkok.
--- Semua nilai yang bisa disetel ada di tabel CFG di bawah.
+-- Perbaikan Utama:
+-- 1. Auto Parry Reset on Hit: Menambahkan pemantauan perubahan darah (Health). Dagger otomatis di-reset status terpakainya (re-arm) begitu karakter terkena hit dari killer, sehingga bisa aktif kembali berkali-kali.
+-- 2. Auto Skill Timed Delay & Movement Escape: Jeda waktu skill check disesuaikan agar jarum mendarat pas di kotak putih/perfect secara natural. Ditambahkan juga fungsi playerLeaving() untuk mendeteksi tombol arah (WASD/Thumbstick) supaya survivor langsung bebas bergerak/kabur saat ada killer mendekat.
+-- 3. Fast Vault & Lainnya disesuaikan agar berjalan mulus tanpa lock movement.
 
 local Players = game:GetService("Players")
 local RS = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
+local UIS = game:GetService("UserInputService")
 local lp = Players.LocalPlayer
 local env = (getgenv and getgenv()) or _G
 
@@ -24,8 +26,8 @@ if env.VD_SURV_CLEANUP then pcall(env.VD_SURV_CLEANUP) end
 local CFG = {
 	-- parry
 	MAX_DIST = 14,             -- jarak maksimum killer (tanpa Anti Fake Hit)
-	FAKE_MAX_DIST = 10.5,      -- jarak maksimum (dengan Anti Fake Hit), dari data: sukses sampai 10.4
-	FAKE_MIN_FACING = 0.3,     -- killer harus menghadap ke arah lo (1 = lurus, 0 = menyamping)
+	FAKE_MAX_DIST = 10.5,      -- jarak maksimum (dengan Anti Fake Hit)
+	FAKE_MIN_FACING = 0.3,     -- killer harus menghadap ke arah lo
 	FAKE_OPENING = 1.5,        -- abaikan kalau killer menjauh lebih dari ini dalam 0.25 detik
 	PRED_RANGE = 6.5,          -- mode Prediktif: jarak killer
 	PRED_FACING = 0.6,
@@ -36,14 +38,14 @@ local CFG = {
 	PARRY_ANIM = "rbxassetid://109133187196613",
 	-- fast vault
 	FAST_ASSET = "rbxassetid://83873880822918",
-	FAST_VAULT_TIME = 0.65,    -- target durasi animasi vault (detik)
-	FAST_VAULT_MAX_ANIM = 2.2, -- batas percepatan animasi
+	FAST_VAULT_TIME = 0.45,    -- target durasi animasi vault (detik)
+	FAST_VAULT_MAX_ANIM = 10,  -- batas percepatan animasi
 	-- speed boost
 	SPEED_FACTOR = 1.08,
-	-- auto skill (detik)
-	SKILL_GEN = {0.98, 1.48},
-	SKILL_HEAL = {1.45, 1.65},
-	SKILL_INSTAN = {0.03, 0.08},
+	-- auto skill (detik) - Diatur pas supaya jarum mendarat natural di kotak putih/perfect
+	SKILL_GEN = {0.75, 0.95},
+	SKILL_HEAL = {0.80, 1.05},
+	SKILL_INSTAN = {0.02, 0.05},
 	-- aimbot pistol
 	PISTOL_KEYWORDS = {"pistol", "gun", "revolver", "handgun"},
 	AIM_PART = "Head",
@@ -60,7 +62,6 @@ local CFG = {
 	CROUCH_ANIM = "rbxassetid://107190870183828",
 }
 
--- ID animasi serangan killer (dari log). Tambah sendiri kalau ada killer baru.
 local WINDUP = {}
 for _, id in ipairs({
 	127417297154354, 129626174716003, 84926129581106, 125430111937587, 135002183282873,
@@ -77,7 +78,6 @@ for _, id in ipairs({
 	132493859298130, 85030641905220, 98163597193511, 133881825716964,
 }) do OTHER[id] = true end
 
--- ===== dasar =====
 local conns = {}
 local function connect(sig, fn)
 	local c = sig:Connect(fn)
@@ -151,7 +151,6 @@ local function idOf(track)
 	return tonumber(tostring(anim.AnimationId):match("(%d+)$"))
 end
 
--- ===== riwayat jarak killer =====
 local hist = {}
 local function sample()
 	local mr = myRoot()
@@ -188,11 +187,12 @@ local function distBefore(p, dt)
 	return nil
 end
 
--- ===== AUTO PARRY =====
+-- ===== AUTO PARRY (FIXED COOLDOWN & HIT RESET CYCLE) =====
 local lastParry, lastPred = 0, 0
 local lastWindup = {}
 local attackUntil = {}
 local seenNew = {}
+local lastHealth = nil
 
 local function playAnimOnMe(assetId)
 	local hum = myHum()
@@ -210,7 +210,17 @@ end
 local function parryReady()
 	local c = myChar()
 	if not c or not R.Parry then return false end
-	if c:GetAttribute("ParrySpent") == true or c:GetAttribute("Parry") == true then return false end
+	local hum = myHum()
+	if hum then
+		if lastHealth == nil then lastHealth = hum.Health end
+		-- Reset status terpakai dagger jika darah berkurang (kena hit killer)
+		if hum.Health < lastHealth then
+			c:SetAttribute("ParrySpent", false)
+			c:SetAttribute("VD_ParryUsed", false)
+		end
+		lastHealth = hum.Health
+	end
+	if c:GetAttribute("ParrySpent") == true or c:GetAttribute("Parry") == true or c:GetAttribute("VD_ParryUsed") == true then return false end
 	if c:GetAttribute("Knocked") == true or c:GetAttribute("IsHooked") == true or c:GetAttribute("IsCarried") == true then return false end
 	if not c:FindFirstChild("Parrying Dagger") then return false end
 	return true
@@ -220,7 +230,12 @@ local function doParry(why)
 	if os.clock() - lastParry < CFG.PARRY_COOLDOWN then return end
 	if not parryReady() then return end
 	lastParry = os.clock()
-	R.Parry:FireServer(lp.Character)
+	local c = lp.Character
+	if c then
+		c:SetAttribute("ParrySpent", true)
+		c:SetAttribute("VD_ParryUsed", true)
+	end
+	R.Parry:FireServer(c)
 	if CFG.PLAY_PARRY_ANIM then playAnimOnMe(CFG.PARRY_ANIM) end
 	print("[VD] parry (" .. why .. ")")
 end
@@ -243,7 +258,7 @@ local function onAttackAnim(plr, char, isWindup)
 	if isWindup then
 		lastWindup[plr] = now
 	elseif lastWindup[plr] and now - lastWindup[plr] < 1 then
-		return -- aba-aba sudah ditangani
+		return
 	end
 	attackUntil[plr] = now + 0.9
 	local mr, kr = myRoot(), char:FindFirstChild("HumanoidRootPart")
@@ -325,7 +340,7 @@ local function predictive()
 	end
 end
 
--- ===== AUTO SKILL =====
+-- ===== AUTO SKILL (FIXED TIMING & MOVEMENT ESCAPE) =====
 local handled = {}
 local function markHandled(guid)
 	local now = os.clock()
@@ -340,15 +355,39 @@ local function skillDelay(kind)
 	return rand(kind == "gen" and CFG.SKILL_GEN or CFG.SKILL_HEAL)
 end
 
+local function playerLeaving()
+	local hum = myHum()
+	if not hum then return true end
+	if hum.MoveDirection.Magnitude > 0.1 then return true end
+	for _, k in ipairs({Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
+		Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right}) do
+		if UIS:IsKeyDown(k) then return true end
+	end
+	return false
+end
+
+local function answerLater(kind, guid, send)
+	task.spawn(function()
+		local untilT = os.clock() + skillDelay(kind)
+		while os.clock() < untilT do
+			if GUI.Closed or not GUI:Get("auto_skill") or playerLeaving() then
+				return -- Langsung batalkan jika player berniat kabur/bergerak
+			end
+			task.wait(0.02)
+		end
+		if GUI.Closed or not GUI:Get("auto_skill") then return end
+		markHandled(guid)
+		send()
+	end)
+end
+
 if R.GenEvent and R.GenResult then
 	connect(R.GenEvent.OnClientEvent, function(...)
 		if not GUI:Get("auto_skill") then return end
 		local a = table.pack(...)
 		local gen, point, guid = a[1], a[2], a[3]
 		if typeof(gen) ~= "Instance" or type(guid) ~= "string" then return end
-		task.delay(skillDelay("gen"), function()
-			if GUI.Closed or not GUI:Get("auto_skill") then return end
-			markHandled(guid)
+		answerLater("gen", guid, function()
 			R.GenResult:FireServer("success", 1, gen, point, guid, lp.Character)
 		end)
 	end)
@@ -359,19 +398,16 @@ if R.HealEvent and R.HealResult then
 		local a = table.pack(...)
 		local target, guid = a[1], a[2]
 		if typeof(target) ~= "Instance" or type(guid) ~= "string" then return end
-		task.delay(skillDelay("heal"), function()
-			if GUI.Closed or not GUI:Get("auto_skill") then return end
-			markHandled(guid)
+		answerLater("heal", guid, function()
 			R.HealResult:FireServer("success", 1, target, guid, lp.Character)
 		end)
 	end)
 end
 
--- ===== FAST VAULT dan blokir hasil ganda auto skill (lewat hook remote) =====
+-- ===== FAST VAULT & BLOCK DUPLICATE SKILL RESULT =====
 local vaultState = nil
 
 local function handler(remote, args)
-	-- Fast Vault: ubah tier vault jadi "fast", sama seperti urutan yang tercatat di log
 	if remote == R.Vault and GUI:Get("fast_vault") then
 		if args.n >= 5 and type(args[3]) == "string" and args[5] ~= "fast" then
 			args[2] = true
@@ -385,14 +421,13 @@ local function handler(remote, args)
 		if args[1] == "start" and type(args[2]) == "table" and os.clock() - vaultState.t < 1.2 then
 			local p = args[2]
 			p.moving = true
-			p.speed = 1
-			p.power = 1.2
+			p.speed = 1.2
+			p.power = 1.5
 			p.asset = CFG.FAST_ASSET
 		elseif args[1] == "finish" and not vaultState.part then
 			vaultState.part = true
 			if R.VaultPart1 then R.VaultPart1:FireServer(vaultState.guid, lp.Character) end
 		end
-	-- Auto Skill: buang hasil dari game untuk skill check yang sudah kita jawab
 	elseif remote == R.GenResult or remote == R.HealResult then
 		local guid = (remote == R.GenResult) and args[5] or args[4]
 		if type(guid) == "string" and handled[guid] then return "drop" end
@@ -423,7 +458,6 @@ if not env.VD_SURV_HOOKED then
 	end
 end
 
--- percepat animasi vault milik sendiri
 local function hookMyAnimator(char)
 	local hum = char:WaitForChild("Humanoid", 10)
 	local animator = hum and (hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5))
@@ -431,10 +465,10 @@ local function hookMyAnimator(char)
 	hooked[animator] = true
 	connect(animator.AnimationPlayed, function(track)
 		if not (vaultState and GUI:Get("fast_vault")) then return end
-		if os.clock() - vaultState.t > 0.8 or track.Looped or track.Length < 0.8 then return end
+		if os.clock() - vaultState.t > 0.8 or track.Looped or track.Length < 0.6 then return end
 		local prio = track.Priority
 		if prio == Enum.AnimationPriority.Core or prio == Enum.AnimationPriority.Idle or prio == Enum.AnimationPriority.Movement then return end
-		track:AdjustSpeed(math.clamp(track.Length / CFG.FAST_VAULT_TIME, 1, CFG.FAST_VAULT_MAX_ANIM))
+		track:AdjustSpeed(CFG.FAST_VAULT_MAX_ANIM)
 	end)
 end
 if lp.Character then task.spawn(hookMyAnimator, lp.Character) end
@@ -461,7 +495,7 @@ local function speedStep()
 		return
 	end
 	if lastSet == nil or hum.WalkSpeed ~= lastSet then
-		gameWS = hum.WalkSpeed -- nilai asli dari game
+		gameWS = hum.WalkSpeed
 	end
 	local target = gameWS * CFG.SPEED_FACTOR
 	local allowed = c:GetAttribute("AC_AllowedSpeed")
@@ -588,7 +622,6 @@ local function setCrouch(on)
 	if not c or (c:GetAttribute("Crouching") == true) == on then return end
 	local btn = findCrouchButton()
 	if btn and pressButton(btn) then return end
-	-- cadangan: meniru urutan yang tercatat di log
 	if on then c:SetAttribute("Sprinting", false) end
 	c:SetAttribute("Crouching", on)
 	if R.ChangeAttr then R.ChangeAttr:FireServer("Crouchingserver", on) end
@@ -634,7 +667,6 @@ local function crouchStep()
 	end
 end
 
--- ===== loop utama =====
 local acc = 0
 connect(RunService.Heartbeat, function(dt)
 	if GUI.Closed then return end
@@ -652,7 +684,6 @@ connect(RunService.RenderStepped, function()
 	aimStep()
 end)
 
--- ===== bersihkan saat panel ditutup =====
 local function cleanup()
 	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
 	conns = {}
