@@ -1,5 +1,5 @@
 -- =====================================================================
--- VD UTILITY - FINAL GITHUB GUI (SLIDER 0.1-3, MINIMIZE, CLOSE, & LG ICON)
+-- VD UTILITY - FULL VERSION (SURVIVOR UTILITY, ESP, SLIDER, & LG HUB)
 -- =====================================================================
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -28,7 +28,7 @@ local T = {
 	knob = Color3.fromRGB(190, 200, 193),
 }
 
--- ===== HALAMAN & MENU LENGKAP =====
+-- ===== HALAMAN & MENU LENGKAP (SURVIVOR & ESP) =====
 local PAGES = {
 	{
 		name = "Survivor", title = "Survivor Utility", icon = "person",
@@ -116,7 +116,7 @@ local main = new("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = T.bg
 round(main, 12); stroke(main, T.line, 1)
 
 local header = new("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1}, main)
-new("TextLabel", {Size = UDim2.new(1, -110, 1, 0), Position = UDim2.fromOffset(16, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 14, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Text = "VD Utility - Final"}, header)
+new("TextLabel", {Size = UDim2.new(1, -110, 1, 0), Position = UDim2.fromOffset(16, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 14, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Text = "VD Utility - Full Version"}, header)
 new("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = T.line, BorderSizePixel = 0}, header)
 
 -- Tombol Minimize (-) dan Close (X) di Header
@@ -238,7 +238,7 @@ local function selectPage(i)
 	end
 	tween(indicator, 0.2, {Position = UDim2.fromOffset(0, pageObjs[i].y + 9)})
 end
-for i, p in ipairs(pageObjs) do connect(p.tab.MouseButton1Click, function() selectPage(i) end) end
+for i, p in ipairs(pageObjs) do p.tab.MouseButton1Click:Connect(function() selectPage(i) end) end
 selectPage(1)
 
 -- Draggable Window
@@ -265,7 +265,7 @@ task.spawn(function()
 	local playerGui = lp:WaitForChild("PlayerGui", 5)
 	if not playerGui then return end
 
-	-- Auto Skill
+	-- 1. Auto Skill
 	RunService.Heartbeat:Connect(function()
 		if not GUI:Get("auto_skill") then return end
 		pcall(function()
@@ -281,7 +281,7 @@ task.spawn(function()
 		end)
 	end)
 
-	-- Fast Vault
+	-- 2. Fast Vault
 	local RemotesFolder = RS:WaitForChild("Remotes", 15)
 	if RemotesFolder and hookmetamethod and getnamecallmethod and newcclosure then
 		local vaultEvent = RemotesFolder:FindFirstChild("Window") and RemotesFolder.Window:FindFirstChild("VaultEvent")
@@ -315,7 +315,7 @@ task.spawn(function()
 		end))
 	end
 
-	-- Speed Boost Slider Handler (0.1 - 3.0)
+	-- 3. Speed Boost Slider Handler (0.1 - 3.0)
 	local lastSet, gameWS = nil, nil
 	local function sameSpeed(a, b) return b ~= nil and math.abs(a - b) < 0.02 end
 
@@ -345,7 +345,7 @@ task.spawn(function()
 	end)
 end)
 
--- ESP Handler
+-- 4. ESP Handler Lengkap (Killer, Survivor, Window, Generator)
 task.spawn(function()
 	local function applyHighlight(targetModel, color, toggleKey)
 		local enabled = GUI:Get(toggleKey)
@@ -402,5 +402,5 @@ task.spawn(function()
 	end)
 end)
 
-print("[VD Utility] GitHub GUI Updated Successfully!")
+print("[VD Utility] Full Version GUI Loaded Successfully!")
 return GUI
