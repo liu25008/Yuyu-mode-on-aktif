@@ -53,7 +53,7 @@ local CFG = {
 	BULLET_SPEED = 250,
 	AIM_LEAD = true,
 	-- auto jongkok
-	KILLER_KEYWORD = "abby",
+	KILLER_KEYWORDS = {"abyss", "abby"},
 	CROUCH_RANGE = 40,
 	STAND_RANGE = 52,
 	CROUCH_SPEED_CAP = 4,
@@ -532,8 +532,14 @@ end
 local crouchTrack = nil
 
 local function matchesKeyword(plr)
-	local kw = CFG.KILLER_KEYWORD
-	local function has(s) return type(s) == "string" and s:lower():find(kw, 1, true) ~= nil end
+	local function has(s)
+		if type(s) ~= "string" then return false end
+		local low = s:lower()
+		for _, kw in ipairs(CFG.KILLER_KEYWORDS) do
+			if low:find(kw, 1, true) then return true end
+		end
+		return false
+	end
 	if has(plr.Name) or has(plr.DisplayName) then return true end
 	local c = plr.Character
 	if c and has(c.Name) then return true end
