@@ -1,5 +1,5 @@
 -- features/ESP.lua
--- Halaman ESP: Highlight bersih tanpa balok persegi pada objek, tanpa teks nama/jarak objek.
+-- Halaman ESP: Generator memunculkan Nama + Progres (Tanpa Jarak), Pallet & Window highlight bersih tanpa kotak.
 -- By: @texx-breaker & Asisten
 
 local Players = game:GetService("Players")
@@ -72,7 +72,7 @@ local function inMatch()
 	return t ~= nil and (t.Name == "Survivors" or t.Name == "Killer")
 end
 
--- ===== ESP PEMAIN (Killer & Survivor Tetap Ada Nama & Jarak) =====
+-- ===== ESP PEMAIN =====
 local players = {}
 
 local function dropPlayer(p)
@@ -132,9 +132,9 @@ local function updatePlayer(p, myR)
 	end
 end
 
--- ===== ESP OBJEK (Tanpa Kotak Persegi, Tanpa Teks Nama/Jarak) =====
+-- ===== ESP OBJEK =====
 local KINDS = {
-	gen = {toggle = "esp_generator"},
+	gen = {toggle = "esp_generator", name = "Generator", y = 3, label = true},
 	pallet = {toggle = "esp_pallet"},
 	window = {toggle = "esp_window"},
 	trap = {toggle = "esp_jtrap"},
@@ -144,6 +144,7 @@ local entities = {}
 
 local function hideObject(e)
 	if e.hl then pcall(function() e.hl:Destroy() end) e.hl = nil end
+	if e.bb then pcall(function() e.bb:Destroy() end) e.bb = nil end
 	e.color = nil
 end
 
@@ -157,7 +158,7 @@ end
 
 local function addObject(kind, model)
 	if entities[model] or not model.Parent then return end
-	local e = {kind = kind, model = model}
+	local e = {kind = kind, model = model, nextProg = 0}
 	entities[model] = e
 	e.conn = model.AncestryChanged:Connect(function()
 		if not model:IsDescendantOf(workspace) then dropObject(model) end
@@ -176,6 +177,48 @@ local function resolveAdornee(model)
 	if model:IsA("BasePart") then return model end
 	local part = model:FindFirstChild("MeshPart") or model:FindFirstChild("Part") or model:FindFirstChildWhichIsA("BasePart", true)
 	return part or model
+end
+
+local function looksLikeProgress(n)
+	n = n:lower()
+	for _, w in ipairs(CFG.PROG_WORDS) do
+		if n:find(w, 1, true) then return true end
+	end
+	return false
+end
+
+local function toPercent(v)
+	if type(v) ~= "number" then return nil end
+	if v >= 0 and v <= 1.0001 then return v * 100 end
+	if v > 1 and v <= 100 then return v end
+	return nil
+end
+
+local function findProgressSource(model)
+	for k, v in pairs(model:GetAttributes()) do
+		if looksLikeProgress(k) and toPercent(v) then return {t = "attr", inst = model, key = k} end
+	end
+	for _, d in ipairs(model:GetDescendants()) do
+		if (d:IsA("NumberValue") or d:IsA("IntValue")) and looksLikeProgress(d.Name) then
+			return {t = "val", inst = d}
+		end
+		for k, v in pairs(d:GetAttributes()) do
+			if looksLikeProgress(k) and toPercent(v) then return {t = "attr", inst = d, key = k} end
+		end
+		if d:IsA("TextLabel") and d.Text:match("%d+%.?%d*%%") then
+			return {t = "text", inst = d}
+		end
+	end
+	return nil
+end
+
+local function readProgress(src)
+	if not src or not src.inst or not src.inst.Parent then return nil end
+	if src.t == "attr" then return toPercent(src.inst:GetAttribute(src.key)) end
+	if src.t == "val" then return toPercent(src.inst.Value) end
+	local n = tonumber(src.inst.Text:match("(%d+%.?%d*)%%"))
+	if n and n <= 100 then return n end
+	return nil
 end
 
 local function updateObject(model, e, myR, match)
@@ -204,12 +247,29 @@ local function updateObject(model, e, myR, match)
 		hl.OutlineTransparency = 0
 		hl.Parent = folder
 		e.hl = hl
+		if cfg.label then
+			local bb, tl = makeLabel(part, cfg.y)
+			e.bb, e.label = bb, tl
+		end
 		e.color = nil
 	end
 	if e.color ~= color then
 		e.color = color
 		e.hl.FillColor = color
 		e.hl.OutlineColor = color
+		if e.label then e.label.TextColor3 = labelColor(color) end
+	end
+	if e.label then
+		local text = cfg.name
+		if e.kind == "gen" then
+			if not e.src and os.clock() >= e.nextProg then
+				e.nextProg = os.clock() + 3
+				e.src = findProgressSource(model)
+			end
+			local pct = readProgress(e.src)
+			if pct then text = string.format("%s %d%%", cfg.name, math.floor(pct + 0.5)) end
+		end
+		e.label.Text = text
 	end
 end
 
@@ -220,8 +280,8 @@ local function onInstance(inst)
 		if n:sub(1, 14) == "GeneratorPoint" then
 			local m = inst.Parent
 			if m and m:IsA("Model") then addObject("gen", m) end
-		elseif n == "PalletPoint" or lowN:find("pallet") then
-			local m = inst:FindFirstAncestor("Newpallet") or inst.Parent
+		elseif n == "PalletPoint" or lowN:find("pallet") or lowN:find("newpallet") then
+			local m = inst:FindFirstAncestor("Newpallet") or inst:FindFirstAncestorOfClass("Model") or inst.Parent
 			if m and m:IsA("Model") then addObject("pallet", m) else addObject("pallet", inst) end
 		elseif n == "VaultTrigger" or n == "Window" or lowN:find("vault") or lowN:find("window") then
 			local m = inst.Parent
@@ -279,4 +339,4 @@ end
 env.VD_ESP_CLEANUP = cleanup
 GUI:OnClose(cleanup)
 
-print("[VD] ESP siap (Highlight bersih tanpa kotak & tanpa teks objek)")
+print("[VD] ESP siap (Generator ber-nama/persen, Objek tanpa jarak)")
