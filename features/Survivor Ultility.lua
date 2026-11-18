@@ -1,5 +1,5 @@
 -- features/Survivor Utility.lua
--- Fitur halaman Survivor Utility [FIXED V4: Real Button/Item Trigger & Fast Vault Alignment]
+-- Fitur halaman Survivor Utility [FIXED V6: Fast Vault Direct Integration from Log & Parry Fix]
 -- By: @texx-breaker & Asisten
 
 local Players = game:GetService("Players")
@@ -45,8 +45,6 @@ local CFG = {
 	KILLER_KEYWORDS = {"abyss", "abby"},
 	CROUCH_RANGE = 40,
 	STAND_RANGE = 52,
-	CROUCH_SPEED_CAP = 4,
-	CROUCH_ANIM = "rbxassetid://107190870183828",
 }
 
 local WINDUP = {
@@ -157,7 +155,7 @@ local function distBefore(p, dt)
 	return nil
 end
 
--- ===== AUTO PARRY (FIXED: UI BUTTON SIMULATION & TOOL USAGE LOCK) =====
+-- ===== AUTO PARRY =====
 local lastParry, lastPred = 0, 0
 local lastWindup = {}
 local attackUntil = {}
@@ -176,7 +174,6 @@ local function playAnimOnMe(assetId)
 	end)
 end
 
--- Cari tombol Dagger di layar HP (PlayerGui) agar tereksekusi layaknya tap manual
 local function findDaggerButton()
 	local pg = lp:FindFirstChild("PlayerGui")
 	if not pg then return nil end
@@ -208,21 +205,25 @@ local function pressButton(btn)
 	return fired
 end
 
+local function checkParryReset()
+	local c = myChar()
+	local hum = myHum()
+	if not (c and hum) then return end
+	if lastHealth == nil then lastHealth = hum.Health end
+	if hum.Health < lastHealth or c:GetAttribute("Hurt") == true or c:GetAttribute("Stunned") == true then
+		c:SetAttribute("ParrySpent", false)
+		c:SetAttribute("VD_ParryUsed", false)
+		c:SetAttribute("Parry", false)
+	end
+	lastHealth = hum.Health
+end
+
 local function parryReady()
+	checkParryReset()
 	local c = myChar()
 	if not c then return false end
-	local hum = myHum()
-	if hum then
-		if lastHealth == nil then lastHealth = hum.Health end
-		if hum.Health < lastHealth then
-			c:SetAttribute("ParrySpent", false)
-			c:SetAttribute("VD_ParryUsed", false)
-		end
-		lastHealth = hum.Health
-	end
 	if c:GetAttribute("ParrySpent") == true or c:GetAttribute("Parry") == true or c:GetAttribute("VD_ParryUsed") == true then return false end
 	if c:GetAttribute("Knocked") == true or c:GetAttribute("IsHooked") == true or c:GetAttribute("IsCarried") == true then return false end
-	
 	local tool = c:FindFirstChild("Parrying Dagger")
 	if not tool then return false end
 	return true
@@ -232,33 +233,17 @@ local function doParry(why)
 	if os.clock() - lastParry < CFG.PARRY_COOLDOWN then return end
 	if not parryReady() then return end
 	lastParry = os.clock()
-	
 	local c = lp.Character
 	if c then
 		c:SetAttribute("ParrySpent", true)
 		c:SetAttribute("VD_ParryUsed", true)
 	end
-
-	-- Eksekusi lewat simulasi tombol HP atau aktivasi tool agar UI game mendeteksi item terpakai
 	local btn = findDaggerButton()
 	if btn and pressButton(btn) then
 		if CFG.PLAY_PARRY_ANIM then playAnimOnMe(CFG.PARRY_ANIM) end
 		return
 	end
-
-	local tool = c and c:FindFirstChild("Parrying Dagger")
-	if tool and tool:IsA("Tool") then
-		tool.Parent = workspace -- Pancing aktivasi tool di-game
-		task.delay(0.05, function()
-			if tool and tool.Parent == workspace and c then
-				tool.Parent = c
-			end
-		end)
-	end
-
-	if R.Parry then
-		R.Parry:FireServer(c)
-	end
+	if R.Parry then R.Parry:FireServer(c) end
 	if CFG.PLAY_PARRY_ANIM then playAnimOnMe(CFG.PARRY_ANIM) end
 end
 
@@ -363,7 +348,7 @@ end
 local function playerLeaving()
 	local hum = myHum()
 	if not hum then return true end
-	if hum.MoveDirection.Magnitude > 0.1 then return true end
+	if hum.MoveDirection.Magnitude > 0.15 then return true end
 	for _, k in ipairs({Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
 		Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right}) do
 		if UIS:IsKeyDown(k) then return true end
@@ -376,9 +361,9 @@ local function answerLater(kind, guid, send)
 		local untilT = os.clock() + skillDelay(kind)
 		while os.clock() < untilT do
 			if GUI.Closed or not GUI:Get("auto_skill") or playerLeaving() then return end
-			task.wait(0.02)
+			task.wait(0.01)
 		end
-		if GUI.Closed or not GUI:Get("auto_skill") then return end
+		if GUI.Closed or not GUI:Get("auto_skill") or playerLeaving() then return end
 		markHandled(guid)
 		send()
 	end)
@@ -407,24 +392,27 @@ if R.HealEvent and R.HealResult then
 	end)
 end
 
--- ===== FAST VAULT (FIXED: WINDOW ALIGNMENT BYPASS) =====
+-- ===== FAST VAULT (FIXED: LOG-BASED REMOTE INTERCEPTION & BYPASS) =====
 local vaultWindow = 0
 local handler = function(remote, args)
-	if remote == R.Vault and GUI:Get("fast_vault") then
-		if args.n >= 5 then
-			args[2] = true       -- Paksa status jadi true
-			args[5] = "fast"     -- Paksa tipe tier menjadi "fast" terlepas dari posisi badan
-			vaultWindow = os.clock() + 1.5
-			task.defer(function()
-				if R.FastVault then R.FastVault:FireServer(lp) end
-			end)
+	if (remote == R.Vault or remote == R.VaultPart1) and GUI:Get("fast_vault") then
+		vaultWindow = os.clock() + 1.5
+		task.defer(function()
+			if R.FastVault then R.FastVault:FireServer(lp) end
+		end)
+		if args.n >= 2 then
+			args[2] = true
+			if args.n >= 5 then args[5] = "fast" end
 		end
 	elseif remote == R.Traversal and GUI:Get("fast_vault") then
-		if args[1] == "start" and type(args[2]) == "table" then
-			args[2].moving = true
-			args[2].speed = 1.2
-			args[2].power = 1.5
-			args[2].asset = CFG.FAST_ASSET
+		if args[1] == "prepare" or args[1] == "start" then
+			args[1] = "start"
+			if type(args[2]) == "table" then
+				args[2].moving = true
+				args[2].speed = 1.2
+				args[2].power = 1.5
+				args[2].asset = CFG.FAST_ASSET
+			end
 		end
 	elseif remote == R.GenResult or remote == R.HealResult then
 		local guid = (remote == R.GenResult) and args[5] or args[4]
@@ -619,6 +607,7 @@ connect(RunService.Heartbeat, function(dt)
 		sample()
 		predictive()
 		crouchStep()
+		checkParryReset()
 	end
 end)
 connect(RunService.RenderStepped, function()
@@ -636,4 +625,4 @@ end
 env.VD_SURV_CLEANUP = cleanup
 GUI:OnClose(cleanup)
 
-print("[VD] Survivor Utility siap.")
+print("[VD] Survivor Utility V6 siap.")
