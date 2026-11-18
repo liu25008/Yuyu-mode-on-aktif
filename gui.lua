@@ -45,7 +45,8 @@ local PAGES = {
 			{kind = "segment", id = "auto_parry_mode", label = "Mode parry", options = {"Hemat", "Prediktif"}, default = "Hemat", indent = true},
 			{kind = "toggle", id = "anti_fake_hit", label = "Anti Fake Hit", desc = "Abaikan serangan palsu atau meleset"},
 			{kind = "toggle", id = "fast_vault", label = "Fast Vault", desc = "Lewati jendela lebih cepat"},
-			{kind = "toggle", id = "speed_boost", label = "Speed Boost"},
+			{kind = "toggle", id = "speed_boost", label = "Speed Boost", desc = "Tambahan kecepatan jalan"},
+			{kind = "slider", id = "speed_value", label = "Kecepatan tambahan", min = 0.1, max = 3, step = 0.1, default = 1.0, indent = true},
 			{kind = "toggle", id = "auto_skill", label = "Auto Skill", desc = "Skill check generator dan heal"},
 			{kind = "segment", id = "auto_skill_mode", label = "Mode auto skill", options = {"Perfect", "Instan"}, default = "Perfect", indent = true},
 			{kind = "toggle", id = "aim_pistol", label = "Aimbot Pistol", desc = "Untuk survivor yang memakai pistol"},
@@ -480,6 +481,70 @@ local function buildSegment(parent, spec, order)
 	end)
 end
 
+local function buildSlider(parent, spec, order)
+	local size = spec.indent and UDim2.new(1, -16, 0, 54) or UDim2.new(1, 0, 0, 54)
+	local row = new("Frame", {Size = size, BackgroundColor3 = T.surface, BorderSizePixel = 0, LayoutOrder = order}, parent)
+	round(row, 9)
+	stroke(row, T.line, 1)
+	new("TextLabel", {
+		Size = UDim2.new(1, -80, 0, 18), Position = UDim2.fromOffset(12, 7), BackgroundTransparency = 1,
+		Font = Enum.Font.Gotham, TextSize = 12, TextColor3 = T.muted, TextXAlignment = Enum.TextXAlignment.Left,
+		TextTruncate = Enum.TextTruncate.AtEnd, Text = spec.label,
+	}, row)
+	local valLbl = new("TextLabel", {
+		Size = UDim2.fromOffset(60, 18), Position = UDim2.new(1, -72, 0, 7), BackgroundTransparency = 1,
+		Font = Enum.Font.GothamMedium, TextSize = 12, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Right, Text = "",
+	}, row)
+	local bar = new("TextButton", {
+		Size = UDim2.new(1, -24, 0, 22), Position = UDim2.fromOffset(12, 27), BackgroundTransparency = 1,
+		Text = "", AutoButtonColor = false, BorderSizePixel = 0,
+	}, row)
+	local rail = new("Frame", {Size = UDim2.new(1, 0, 0, 6), Position = UDim2.new(0, 0, 0.5, -3), BackgroundColor3 = T.off, BorderSizePixel = 0}, bar)
+	round(rail, 3)
+	local fill = new("Frame", {Size = UDim2.new(0, 0, 1, 0), BackgroundColor3 = T.accent, BorderSizePixel = 0}, rail)
+	round(fill, 3)
+	local knob = new("Frame", {
+		Size = UDim2.fromOffset(14, 14), AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.new(0, 0, 0.5, 0),
+		BackgroundColor3 = T.text, BorderSizePixel = 0, ZIndex = 2,
+	}, rail)
+	round(knob, 7)
+
+	register(spec.id, spec.default, function(v, instant)
+		local frac = (v - spec.min) / (spec.max - spec.min)
+		local t = instant and 0 or 0.06
+		tween(fill, t, {Size = UDim2.new(frac, 0, 1, 0)})
+		tween(knob, t, {Position = UDim2.new(frac, 0, 0.5, 0)})
+		valLbl.Text = string.format("%.1f", v)
+	end)
+
+	local dragging = false
+	local function apply(x)
+		local frac = math.clamp((x - rail.AbsolutePosition.X) / math.max(rail.AbsoluteSize.X, 1), 0, 1)
+		local v = spec.min + frac * (spec.max - spec.min)
+		v = math.floor(v / spec.step + 0.5) * spec.step
+		v = math.clamp(math.floor(v * 100 + 0.5) / 100, spec.min, spec.max)
+		GUI:Set(spec.id, v)
+	end
+	connect(bar.InputBegan, function(i)
+		if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+			dragging = true
+			parent.ScrollingEnabled = false
+			apply(i.Position.X)
+		end
+	end)
+	connect(UIS.InputChanged, function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+			apply(i.Position.X)
+		end
+	end)
+	connect(UIS.InputEnded, function(i)
+		if dragging and (i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch) then
+			dragging = false
+			parent.ScrollingEnabled = true
+		end
+	end)
+end
+
 -- ===== bikin halaman dan tab =====
 local pageObjs = {}
 
@@ -506,6 +571,8 @@ for idx, page in ipairs(PAGES) do
 	for order, spec in ipairs(page.rows) do
 		if spec.kind == "toggle" then
 			buildToggle(scroll, spec, order)
+		elseif spec.kind == "slider" then
+			buildSlider(scroll, spec, order)
 		else
 			buildSegment(scroll, spec, order)
 		end
@@ -609,6 +676,9 @@ if env.VD_ESP_CLEANUP then pcall(env.VD_ESP_CLEANUP) end
 local CFG = {
 	UPDATE = 0.1,            -- detik antar pembaruan label dan jarak
 	OBJ_MAX_DIST = 300,      -- jarak maksimum untuk objek (pallet, window, generator, dll)
+	OBJ_FILL = 0.35,         -- transparansi warna di badan objek (0 = pekat, 1 = bening)
+	GEN_TEXT_SIZE = 16,      -- ukuran tulisan nama dan progres generator
+	MAX_HIGHLIGHTS = 28,     -- Roblox hanya menggambar sekitar 31 highlight sekaligus, objek terdekat didahulukan
 	PROG_WORDS = {"progress", "percent", "repair", "charge", "completion"}, -- nama sumber progres generator
 }
 
@@ -632,9 +702,10 @@ local function labelColor(c)
 	return c:Lerp(Color3.new(1, 1, 1), 0.4)
 end
 
-local function makeLabel(adornee, yOff)
+local function makeLabel(adornee, yOff, textSize)
+	local ts = textSize or 13
 	local bb = Instance.new("BillboardGui")
-	bb.Size = UDim2.fromOffset(220, 20)
+	bb.Size = UDim2.fromOffset(240, ts + 10)
 	bb.StudsOffset = Vector3.new(0, yOff, 0)
 	bb.AlwaysOnTop = true
 	bb.MaxDistance = math.huge
@@ -644,7 +715,7 @@ local function makeLabel(adornee, yOff)
 	tl.Size = UDim2.new(1, 0, 1, 0)
 	tl.BackgroundTransparency = 1
 	tl.Font = Enum.Font.GothamMedium
-	tl.TextSize = 13
+	tl.TextSize = ts
 	tl.TextStrokeTransparency = 0.35
 	tl.TextStrokeColor3 = Color3.new(0, 0, 0)
 	tl.Text = ""
@@ -724,19 +795,21 @@ local function updatePlayer(p, myR)
 end
 
 -- ===== ESP objek (generator, pallet, window, jtrap, zombie) =====
+-- Warna dipasang langsung di badan objek (Highlight). Tulisan hanya untuk generator, jtrap, zombie, tanpa jarak.
 local KINDS = {
-	gen = {toggle = "esp_generator", name = "Generator", y = 3},
-	pallet = {toggle = "esp_objects", name = "Pallet", y = 2},
-	window = {toggle = "esp_objects", name = "Window", y = 2},
-	trap = {toggle = "esp_jtrap", name = "JTrap", y = 2},
-	zombie = {toggle = "esp_zombie", name = "Zombie", y = 3.2},
+	gen = {toggle = "esp_generator", name = "Generator", y = 3, label = true, size = CFG.GEN_TEXT_SIZE},
+	pallet = {toggle = "esp_objects", name = "Pallet"},
+	window = {toggle = "esp_objects", name = "Window"},
+	trap = {toggle = "esp_jtrap", name = "JTrap", y = 2, label = true, size = 13},
+	zombie = {toggle = "esp_zombie", name = "Zombie", y = 3.2, label = true, size = 13},
 }
 local entities = {}
 local diagWritten = false
 
 local function hideObject(e)
-	if e.box then pcall(function() e.box:Destroy() end) e.box = nil end
+	if e.hl then pcall(function() e.hl:Destroy() end) e.hl = nil end
 	if e.bb then pcall(function() e.bb:Destroy() end) e.bb = nil end
+	e.label = nil
 	e.color = nil
 end
 
@@ -827,40 +900,54 @@ local function writeDiag(model)
 	pcall(writefile, "VD_GenInfo.txt", table.concat(lines, "\n"))
 end
 
-local function updateObject(model, e, myR, match)
+-- hitung jarak objek, sembunyikan kalau tidak perlu tampil; hasilnya jarak atau nil
+local function objectDistance(model, e, myR, match)
 	local cfg = KINDS[e.kind]
 	if not (match and GUI:Get(cfg.toggle)) or not model:IsDescendantOf(workspace) then
 		hideObject(e)
-		return
+		return nil
 	end
 	local part = e.part
 	if not part or not part.Parent then
 		part = mainPart(model)
 		e.part = part
 	end
-	if not part then return end
+	if not part then
+		hideObject(e)
+		return nil
+	end
 	local d = myR and (part.Position - myR.Position).Magnitude or 0
 	if d > CFG.OBJ_MAX_DIST then
 		hideObject(e)
-		return
+		return nil
 	end
+	return d
+end
+
+local function showObject(model, e)
+	local cfg = KINDS[e.kind]
 	local color = GUI:Get(cfg.toggle .. "_color")
-	if not e.box then
-		local sb = Instance.new("SelectionBox")
-		sb.Adornee = model:IsA("PVInstance") and model or part
-		sb.LineThickness = 0.04
-		sb.SurfaceTransparency = 0.8
-		sb.Parent = folder
-		e.box = sb
-		local bb, tl = makeLabel(part, cfg.y)
-		e.bb, e.label = bb, tl
+	if not e.hl then
+		local hl = Instance.new("Highlight")
+		hl.Adornee = model
+		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+		hl.FillTransparency = CFG.OBJ_FILL
+		hl.OutlineTransparency = 0
+		hl.Parent = folder
+		e.hl = hl
+		if cfg.label then
+			local bb, tl = makeLabel(e.part, cfg.y, cfg.size)
+			e.bb, e.label = bb, tl
+		end
+		e.color = nil
 	end
 	if e.color ~= color then
 		e.color = color
-		e.box.Color3 = color
-		e.box.SurfaceColor3 = color
-		e.label.TextColor3 = labelColor(color)
+		e.hl.FillColor = color
+		e.hl.OutlineColor = color
+		if e.label then e.label.TextColor3 = labelColor(color) end
 	end
+	if not e.label then return end
 	local text = cfg.name
 	if e.kind == "gen" then
 		if not e.src and os.clock() >= e.nextProg then
@@ -871,7 +958,24 @@ local function updateObject(model, e, myR, match)
 		local pct = readProgress(e.src)
 		if pct then text = string.format("%s %d%%", cfg.name, math.floor(pct + 0.5)) end
 	end
-	e.label.Text = string.format("%s  %dm", text, math.floor(d + 0.5))
+	e.label.Text = text
+end
+
+-- objek terdekat didahulukan supaya tidak melewati batas highlight Roblox
+local function updateObjects(myR, match, budget)
+	local list = {}
+	for model, e in pairs(entities) do
+		local d = objectDistance(model, e, myR, match)
+		if d then list[#list + 1] = {model = model, e = e, d = d} end
+	end
+	table.sort(list, function(a, b) return a.d < b.d end)
+	for i, it in ipairs(list) do
+		if i <= budget then
+			showObject(it.model, it.e)
+		else
+			hideObject(it.e)
+		end
+	end
 end
 
 -- ===== deteksi objek di map =====
@@ -893,6 +997,8 @@ local function onInstance(inst)
 			if m and m:IsA("Model") then addObject("gen", m) end
 		elseif n == "PalletPoint" then
 			local m = inst:FindFirstAncestor("Newpallet") or (inst.Parent and inst.Parent.Parent)
+			-- jaga-jaga: kalau yang ketemu model raksasa (bukan pallet), pakai induk langsung
+			if m and m:IsA("Model") and m:GetExtentsSize().Magnitude > 40 and inst.Parent and inst.Parent:IsA("Model") then m = inst.Parent end
 			if m and m:IsA("Model") then addObject("pallet", m) end
 		elseif n == "VaultTrigger" then
 			local m = inst.Parent
@@ -934,7 +1040,9 @@ connect(RunService.Heartbeat, function(dt)
 	local myR = myRoot()
 	local match = inMatch()
 	for _, p in ipairs(Players:GetPlayers()) do updatePlayer(p, myR) end
-	for model, e in pairs(entities) do updateObject(model, e, myR, match) end
+	local used = 0
+	for _ in pairs(players) do used = used + 1 end
+	updateObjects(myR, match, math.max(0, CFG.MAX_HIGHLIGHTS - used))
 end)
 
 -- ===== bersihkan =====
@@ -1263,8 +1371,10 @@ local CFG = {
 	FAST_ASSET = "rbxassetid://83873880822918",
 	FAST_VAULT_TIME = 0.65,    -- target durasi animasi vault (detik)
 	FAST_VAULT_MAX_ANIM = 2.2, -- batas percepatan animasi
-	-- speed boost
-	SPEED_FACTOR = 1.08,
+	-- speed boost: besar tambahan diatur dari slider "Kecepatan tambahan" (0.1 sampai 3)
+	-- auto skill: batal menjawab kalau lo menjauh segini jauh (stud) dari generator atau teman
+	SKILL_ABORT_DIST = 25,
+	NEEDLE_OFFSET = 0,        -- koreksi sudut jarum (derajat) kalau pendaratan visualnya kurang pas
 	-- auto skill (detik)
 	SKILL_GEN = {0.98, 1.48},
 	SKILL_HEAL = {1.45, 1.65},
@@ -1565,15 +1675,169 @@ local function skillDelay(kind)
 	return rand(kind == "gen" and CFG.SKILL_GEN or CFG.SKILL_HEAL)
 end
 
+-- lo dianggap mau kabur kalau mulai bergerak, jatuh, digantung, digendong, atau sudah jauh dari target
+local function playerLeaving(target)
+	local hum, c = myHum(), myChar()
+	if not (hum and c) then return true end
+	if hum.MoveDirection.Magnitude > 0.1 then return true end
+	for _, k in ipairs({"Knocked", "IsHooked", "IsCarried"}) do
+		if c:GetAttribute(k) == true then return true end
+	end
+	local mr = myRoot()
+	if mr and typeof(target) == "Instance" then
+		if target:IsA("Player") then target = target.Character end
+		if target then
+			local part = target:IsA("BasePart") and target or target:FindFirstChildWhichIsA("BasePart", true)
+			if part and (part.Position - mr.Position).Magnitude > CFG.SKILL_ABORT_DIST then return true end
+		end
+	end
+	return false
+end
+
+-- ===== JARUM VISUAL (Auto Skill mode Perfect) =====
+-- Skill check dijawab lewat remote, jadi jarum di layar tetap berputar sendiri. Di sini jarumnya
+-- dicari lalu dikunci ke zona perfect tepat sebelum jawaban dikirim, biar terlihat mendarat di perfect.
+local NEEDLE_WORDS = {"needle", "pointer", "arrow", "indicator", "hand", "cursor", "jarum"}
+local ZONE_WORDS = {"perfect", "success", "great", "zone", "target", "goal"}
+local skillDumped = false
+
+local function nameHas(obj, words)
+	local n = obj.Name:lower()
+	for _, w in ipairs(words) do
+		if n:find(w, 1, true) then return true end
+	end
+	return false
+end
+
+local function ancestorRot(obj)
+	local r, o = 0, obj.Parent
+	while o and o:IsA("GuiObject") do
+		r = r + o.Rotation
+		o = o.Parent
+	end
+	return r
+end
+
+local function findSkillRoot()
+	local pg = lp:FindFirstChild("PlayerGui")
+	if not pg then return nil end
+	for _, d in ipairs(pg:GetDescendants()) do
+		if d:IsA("GuiObject") or d:IsA("ScreenGui") then
+			local n = d.Name:lower()
+			if n:find("skill", 1, true) and (n:find("check", 1, true) or n == "skill") then
+				local sg = d:IsA("ScreenGui") and d or d:FindFirstAncestorOfClass("ScreenGui")
+				local shown = (not d:IsA("GuiObject") or d.Visible) and (not sg or sg.Enabled)
+				if shown then return d end
+			end
+		end
+	end
+	return nil
+end
+
+-- simpan isi tampilan skill check sekali saja, buat dicocokkan kalau jarum belum pas
+local function dumpSkillGui(scope, needle, zone)
+	if skillDumped or not writefile then return end
+	skillDumped = true
+	local lines = {
+		"scope: " .. scope:GetFullName(),
+		"jarum: " .. (needle and needle:GetFullName() or "tidak ketemu"),
+		"zona: " .. (zone and zone:GetFullName() or "tidak ketemu"),
+	}
+	local n = 0
+	for _, d in ipairs(scope:GetDescendants()) do
+		if d:IsA("GuiObject") and d.Visible then
+			n = n + 1
+			if n > 120 then break end
+			lines[#lines + 1] = string.format("%s %s rot=%.1f pos=%s size=%s", d.ClassName, d:GetFullName(),
+				d.Rotation, tostring(d.Position), tostring(d.Size))
+		end
+	end
+	pcall(writefile, "VD_SkillGui.txt", table.concat(lines, "\n"))
+end
+
+-- cari elemen yang berputar (jarum) dan zona perfect
+local function prepareNeedle()
+	local pg = lp:FindFirstChild("PlayerGui")
+	local root = findSkillRoot()
+	local scope = root or pg
+	if not scope then return nil end
+	local objs, before = {}, {}
+	for _, d in ipairs(scope:GetDescendants()) do
+		if d:IsA("GuiObject") and d.Visible then
+			objs[#objs + 1] = d
+			before[d] = d.Rotation
+		end
+	end
+	task.wait(0.1)
+	local needle, byName
+	for _, d in ipairs(objs) do
+		if d.Parent and d.Rotation ~= before[d] then
+			if nameHas(d, NEEDLE_WORDS) then byName = byName or d end
+			needle = needle or d
+		end
+	end
+	needle = byName or (root and needle) or nil
+	local zone
+	for _, w in ipairs(ZONE_WORDS) do
+		for _, d in ipairs(scope:GetDescendants()) do
+			if d:IsA("GuiObject") and d ~= needle and d.Name:lower():find(w, 1, true) then
+				zone = d
+				break
+			end
+		end
+		if zone then break end
+	end
+	dumpSkillGui(scope, needle, zone)
+	if needle and zone then return {needle = needle, zone = zone} end
+	return nil
+end
+
+-- kunci jarum ke zona perfect sebentar (setiap frame, supaya tidak ditimpa animasi game)
+local function landNeedle(info)
+	local needle, zone = info.needle, info.zone
+	if not (needle.Parent and zone.Parent) then return end
+	local target = zone.Rotation + ancestorRot(zone) - ancestorRot(needle) + CFG.NEEDLE_OFFSET
+	local untilT = os.clock() + 0.6
+	pcall(function() RunService:UnbindFromRenderStep("VDNeedle") end)
+	RunService:BindToRenderStep("VDNeedle", Enum.RenderPriority.Last.Value, function()
+		if os.clock() > untilT or not needle.Parent then
+			RunService:UnbindFromRenderStep("VDNeedle")
+			return
+		end
+		needle.Rotation = target
+	end)
+end
+
+-- tunggu lalu jawab skill check; batal total kalau lo mulai kabur supaya jawaban telat tidak menarik lo balik
+local function answerLater(kind, target, guid, send)
+	task.spawn(function()
+		local info
+		if GUI:Get("auto_skill_mode") == "Perfect" then
+			task.spawn(function()
+				task.wait(0.15)
+				local ok, res = pcall(prepareNeedle)
+				if ok then info = res end
+			end)
+		end
+		local untilT = os.clock() + skillDelay(kind)
+		while os.clock() < untilT do
+			if GUI.Closed or not GUI:Get("auto_skill") or playerLeaving(target) then return end
+			task.wait(0.05)
+		end
+		if GUI.Closed or not GUI:Get("auto_skill") or playerLeaving(target) then return end
+		if info then pcall(landNeedle, info) end
+		markHandled(guid)
+		send()
+	end)
+end
+
 if R.GenEvent and R.GenResult then
 	connect(R.GenEvent.OnClientEvent, function(...)
 		if not GUI:Get("auto_skill") then return end
 		local a = table.pack(...)
 		local gen, point, guid = a[1], a[2], a[3]
 		if typeof(gen) ~= "Instance" or type(guid) ~= "string" then return end
-		task.delay(skillDelay("gen"), function()
-			if GUI.Closed or not GUI:Get("auto_skill") then return end
-			markHandled(guid)
+		answerLater("gen", gen, guid, function()
 			R.GenResult:FireServer("success", 1, gen, point, guid, lp.Character)
 		end)
 	end)
@@ -1584,9 +1848,7 @@ if R.HealEvent and R.HealResult then
 		local a = table.pack(...)
 		local target, guid = a[1], a[2]
 		if typeof(target) ~= "Instance" or type(guid) ~= "string" then return end
-		task.delay(skillDelay("heal"), function()
-			if GUI.Closed or not GUI:Get("auto_skill") then return end
-			markHandled(guid)
+		answerLater("heal", target, guid, function()
 			R.HealResult:FireServer("success", 1, target, guid, lp.Character)
 		end)
 	end)
@@ -1594,14 +1856,43 @@ end
 
 -- ===== FAST VAULT dan blokir hasil ganda auto skill (lewat hook remote) =====
 local vaultState = nil
+local vaultWindow = 0 -- selama jendela ini aktif, remote yang dikirim dicatat ke VD_VaultLog.txt
+local vaultLogN = 0
+
+local function logVault(tag, rem, args)
+	if vaultLogN >= 80 or not appendfile then return end
+	vaultLogN = vaultLogN + 1
+	local parts = {}
+	for i = 1, args.n do
+		local v = args[i]
+		local t = typeof(v)
+		if t == "string" or t == "number" or t == "boolean" then
+			parts[i] = t .. ":" .. tostring(v):sub(1, 24)
+		elseif t == "Instance" then
+			parts[i] = "Instance:" .. v.ClassName
+		elseif t == "table" then
+			local ks = {}
+			for k, val in pairs(v) do ks[#ks + 1] = tostring(k) .. "=" .. tostring(val):sub(1, 20) end
+			parts[i] = "table{" .. table.concat(ks, ",") .. "}"
+		else
+			parts[i] = t
+		end
+	end
+	pcall(appendfile, "VD_VaultLog.txt", string.format("%s %s (%s)\n", tag, rem.Name, table.concat(parts, ", ")))
+end
 
 local function handler(remote, args)
+	if GUI:Get("fast_vault") and (os.clock() < vaultWindow or remote == R.Vault or remote == R.Traversal
+		or remote == R.FastVault or remote == R.VaultPart1) then
+		logVault("kirim", remote, args)
+	end
 	-- Fast Vault: ubah tier vault jadi "fast", sama seperti urutan yang tercatat di log
 	if remote == R.Vault and GUI:Get("fast_vault") then
 		if args.n >= 5 and type(args[3]) == "string" and args[5] ~= "fast" then
 			args[2] = true
 			args[5] = "fast"
 			vaultState = {guid = args[3], t = os.clock(), part = false}
+			vaultWindow = os.clock() + 2
 			task.delay(0.1, function()
 				if R.FastVault and vaultState then R.FastVault:FireServer(lp) end
 			end)
@@ -1632,7 +1923,7 @@ if not env.VD_SURV_HOOKED then
 		local old
 		old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
 			local m = getnamecallmethod()
-			if m == "FireServer" and not (checkcaller and checkcaller()) then
+			if (m == "FireServer" or m == "InvokeServer") and not (checkcaller and checkcaller()) then
 				local h = env.VD_SURV_HANDLER
 				if h and typeof(self) == "Instance" then
 					local args = table.pack(...)
@@ -1648,18 +1939,43 @@ if not env.VD_SURV_HOOKED then
 	end
 end
 
--- percepat animasi vault milik sendiri
+-- percepat animasi vault milik sendiri. Tidak bergantung pada hook remote: cukup atribut "isvaulting" menyala.
+local function boostVaultAnims(animator)
+	for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do
+		local prio = tr.Priority
+		if not tr.Looped and tr.Length >= 0.8 and prio ~= Enum.AnimationPriority.Core
+			and prio ~= Enum.AnimationPriority.Idle and prio ~= Enum.AnimationPriority.Movement then
+			tr:AdjustSpeed(math.clamp(tr.Length / CFG.FAST_VAULT_TIME, 1, CFG.FAST_VAULT_MAX_ANIM))
+		end
+	end
+end
+
 local function hookMyAnimator(char)
 	local hum = char:WaitForChild("Humanoid", 10)
 	local animator = hum and (hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5))
 	if not animator or hooked[animator] then return end
 	hooked[animator] = true
 	connect(animator.AnimationPlayed, function(track)
-		if not (vaultState and GUI:Get("fast_vault")) then return end
-		if os.clock() - vaultState.t > 0.8 or track.Looped or track.Length < 0.8 then return end
+		if not GUI:Get("fast_vault") then return end
+		local vaulting = (vaultState and os.clock() - vaultState.t < 0.8) or char:GetAttribute("isvaulting") == true
+		if not vaulting or track.Looped or track.Length < 0.8 then return end
 		local prio = track.Priority
 		if prio == Enum.AnimationPriority.Core or prio == Enum.AnimationPriority.Idle or prio == Enum.AnimationPriority.Movement then return end
 		track:AdjustSpeed(math.clamp(track.Length / CFG.FAST_VAULT_TIME, 1, CFG.FAST_VAULT_MAX_ANIM))
+	end)
+	connect(char:GetAttributeChangedSignal("isvaulting"), function()
+		if char:GetAttribute("isvaulting") ~= true then return end
+		vaultWindow = os.clock() + 2
+		if not GUI:Get("fast_vault") then return end
+		for _, dt in ipairs({0, 0.05, 0.15}) do
+			task.delay(dt, function()
+				if animator.Parent then boostVaultAnims(animator) end
+			end)
+		end
+		-- kalau hook remote tidak menangkap event vault, tetap kirim sinyal fast vault
+		if R.FastVault and not (vaultState and os.clock() - vaultState.t < 1.5) then
+			task.delay(0.1, function() R.FastVault:FireServer(lp) end)
+		end
 	end)
 end
 if lp.Character then task.spawn(hookMyAnimator, lp.Character) end
@@ -1688,7 +2004,7 @@ local function speedStep()
 	if lastSet == nil or hum.WalkSpeed ~= lastSet then
 		gameWS = hum.WalkSpeed -- nilai asli dari game
 	end
-	local target = gameWS * CFG.SPEED_FACTOR
+	local target = gameWS + (tonumber(GUI:Get("speed_value")) or 1)
 	local allowed = c:GetAttribute("AC_AllowedSpeed")
 	if type(allowed) == "number" then target = math.min(target, allowed - 0.5) end
 	if target < gameWS then target = gameWS end
@@ -1883,6 +2199,7 @@ local function cleanup()
 	conns = {}
 	local hum = myHum()
 	if hum and lastSet and hum.WalkSpeed == lastSet and gameWS then hum.WalkSpeed = gameWS end
+	pcall(function() RunService:UnbindFromRenderStep("VDNeedle") end)
 	if crouchTrack then pcall(function() crouchTrack:Stop() end) end
 	if env.VD_SURV_HANDLER == handler then env.VD_SURV_HANDLER = nil end
 end
