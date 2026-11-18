@@ -1,5 +1,5 @@
 -- =====================================================================
--- VD UTILITY - FULL VERSION (SURVIVOR UTILITY, ESP, SLIDER, & LG HUB)
+-- VD UTILITY - MASTER FULL VERSION (SURVIVOR, ESP, KILLER, SLIDER & LG HUB)
 -- =====================================================================
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -28,7 +28,7 @@ local T = {
 	knob = Color3.fromRGB(190, 200, 193),
 }
 
--- ===== HALAMAN & MENU LENGKAP (SURVIVOR & ESP) =====
+-- ===== HALAMAN & MENU LENGKAP (SURVIVOR, ESP, KILLER) =====
 local PAGES = {
 	{
 		name = "Survivor", title = "Survivor Utility", icon = "person",
@@ -47,6 +47,14 @@ local PAGES = {
 			{kind = "toggle", id = "esp_survivor", label = "Survivor"},
 			{kind = "toggle", id = "esp_window", label = "Window / Vault"},
 			{kind = "toggle", id = "esp_generator", label = "Generator"},
+		},
+	},
+	{
+		name = "Killer", title = "Killer Utility", icon = "skull",
+		rows = {
+			{kind = "toggle", id = "aim_jeff", label = "Aimbot Jeff"},
+			{kind = "toggle", id = "aim_veil", label = "Aimbot Veil"},
+			{kind = "toggle", id = "aim_cure", label = "Aimbot The Cure"},
 		},
 	},
 }
@@ -75,6 +83,15 @@ function GUI:Set(id, value, silent)
 	if not silent then fire(id, value) end
 end
 
+function GUI:OnChanged(id, fn)
+	if not listeners[id] then listeners[id] = {} end
+	table.insert(listeners[id], fn)
+end
+
+function GUI:OnClose(fn)
+	-- Hook penutupan GUI
+end
+
 local function new(class, props, parent)
 	local o = Instance.new(class)
 	for k, v in pairs(props or {}) do o[k] = v end
@@ -96,6 +113,8 @@ local function drawIcon(kind, parent, color)
 	if kind == "person" then
 		part(UDim2.fromOffset(7, 7), UDim2.fromOffset(5, 1), 4)
 		part(UDim2.fromOffset(14, 8), UDim2.fromOffset(2, 10), 4)
+	elseif kind == "skull" then
+		part(UDim2.fromOffset(12, 10), UDim2.fromOffset(3, 2), 4)
 	else
 		local ring = new("Frame", {Size = UDim2.fromOffset(18, 10), Position = UDim2.fromOffset(0, 4), BackgroundTransparency = 1}, box)
 		round(ring, 5); stroke(ring, color, 2)
@@ -116,7 +135,7 @@ local main = new("Frame", {Size = UDim2.new(1, 0, 1, 0), BackgroundColor3 = T.bg
 round(main, 12); stroke(main, T.line, 1)
 
 local header = new("Frame", {Size = UDim2.new(1, 0, 0, 40), BackgroundTransparency = 1}, main)
-new("TextLabel", {Size = UDim2.new(1, -110, 1, 0), Position = UDim2.fromOffset(16, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 14, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Text = "VD Utility - Full Version"}, header)
+new("TextLabel", {Size = UDim2.new(1, -110, 1, 0), Position = UDim2.fromOffset(16, 0), BackgroundTransparency = 1, Font = Enum.Font.GothamMedium, TextSize = 14, TextColor3 = T.text, TextXAlignment = Enum.TextXAlignment.Left, Text = "VD Utility - Master Full"}, header)
 new("Frame", {Size = UDim2.new(1, 0, 0, 1), Position = UDim2.new(0, 0, 1, -1), BackgroundColor3 = T.line, BorderSizePixel = 0}, header)
 
 -- Tombol Minimize (-) dan Close (X) di Header
@@ -126,7 +145,7 @@ round(btnClose, 6)
 local btnMin = new("TextButton", {Size = UDim2.fromOffset(30, 30), Position = UDim2.new(1, -70, 0.5, -15), BackgroundColor3 = T.surface, Font = Enum.Font.GothamBold, TextSize = 14, TextColor3 = T.text, Text = "-"}, header)
 round(btnMin, 6); stroke(btnMin, T.line, 1)
 
--- Floating Logo LG untuk membuka kembali GUI saat diminimize
+-- Floating Logo LG (Bisa Digeser/Draggable)
 local floatBtn = new("TextButton", {Size = UDim2.fromOffset(45, 45), Position = UDim2.new(0, 30, 0.5, -22), BackgroundColor3 = T.accent, Font = Enum.Font.GothamBold, TextSize = 16, TextColor3 = T.text, Text = "LG", Visible = false, ZIndex = 999}, gui)
 round(floatBtn, 22); stroke(floatBtn, T.accentSoft, 2)
 
@@ -141,7 +160,25 @@ floatBtn.MouseButton1Click:Connect(function()
 end)
 
 btnClose.MouseButton1Click:Connect(function()
+	GUI.Closed = true
 	gui:Destroy()
+end)
+
+-- Draggable untuk Logo LG agar bisa digeser-geser
+local draggingLG, dragInputLG, startPosLG
+floatBtn.InputBegan:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+		draggingLG = true; dragInputLG = i.Position; startPosLG = floatBtn.Position
+	end
+end)
+UIS.InputEnded:Connect(function(i)
+	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then draggingLG = false end
+end)
+UIS.InputChanged:Connect(function(i)
+	if draggingLG and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+		local d = i.Position - dragInputLG
+		floatBtn.Position = UDim2.new(startPosLG.X.Scale, startPosLG.X.Offset + d.X, startPosLG.Y.Scale, startPosLG.Y.Offset + d.Y)
+	end
 end)
 
 local side = new("Frame", {Size = UDim2.new(0, 110, 1, -40), Position = UDim2.fromOffset(0, 40), BackgroundColor3 = T.side}, main)
@@ -241,7 +278,7 @@ end
 for i, p in ipairs(pageObjs) do p.tab.MouseButton1Click:Connect(function() selectPage(i) end) end
 selectPage(1)
 
--- Draggable Window
+-- Draggable Window Utama
 local draggingWindow, startInput, startWindowPos
 header.InputBegan:Connect(function(i)
 	if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -259,13 +296,12 @@ UIS.InputChanged:Connect(function(i)
 end)
 
 -- =====================================================================
--- INJEKSI FITUR: SURVIVOR UTILITY & ESP
+-- INJEKSI 1: SURVIVOR UTILITY (Auto Skill, Fast Vault, & Speed Slider)
 -- =====================================================================
 task.spawn(function()
 	local playerGui = lp:WaitForChild("PlayerGui", 5)
 	if not playerGui then return end
 
-	-- 1. Auto Skill
 	RunService.Heartbeat:Connect(function()
 		if not GUI:Get("auto_skill") then return end
 		pcall(function()
@@ -281,7 +317,6 @@ task.spawn(function()
 		end)
 	end)
 
-	-- 2. Fast Vault
 	local RemotesFolder = RS:WaitForChild("Remotes", 15)
 	if RemotesFolder and hookmetamethod and getnamecallmethod and newcclosure then
 		local vaultEvent = RemotesFolder:FindFirstChild("Window") and RemotesFolder.Window:FindFirstChild("VaultEvent")
@@ -305,7 +340,7 @@ task.spawn(function()
 							args[2].moving = true
 							args[2].speed = 2.0
 							args[2].power = 1.5
-							args[2].asset = "rbxassetid://79965656177" --[span_0](start_span)[span_0](end_span)
+							args[2].asset = "rbxassetid://79965656177"
 						end
 					end
 					return old(self, table.unpack(args, 1, args.n))
@@ -315,7 +350,6 @@ task.spawn(function()
 		end))
 	end
 
-	-- 3. Speed Boost Slider Handler (0.1 - 3.0)
 	local lastSet, gameWS = nil, nil
 	local function sameSpeed(a, b) return b ~= nil and math.abs(a - b) < 0.02 end
 
@@ -345,8 +379,16 @@ task.spawn(function()
 	end)
 end)
 
--- 4. ESP Handler Lengkap (Killer, Survivor, Window, Generator)
+-- =====================================================================
+-- INJEKSI 2: ESP LENGKAP (Killer, Survivor, Window, Generator)
+-- =====================================================================
 task.spawn(function()
+	local folder = CoreGui:FindFirstChild("VDESP_Fixed")
+	if folder then folder:Destroy() end
+	folder = Instance.new("Folder")
+	folder.Name = "VDESP_Fixed"
+	folder.Parent = CoreGui
+
 	local function applyHighlight(targetModel, color, toggleKey)
 		local enabled = GUI:Get(toggleKey)
 		local existing = targetModel:FindFirstChild("VD_HL")
@@ -402,5 +444,197 @@ task.spawn(function()
 	end)
 end)
 
-print("[VD Utility] Full Version GUI Loaded Successfully!")
+-- =====================================================================
+-- INJEKSI 3: KILLER UTILITY (Aimbot Jeff, Veil, The Cure)
+-- =====================================================================
+task.spawn(function()
+	local PROFILES = {
+		aim_jeff = {label = "Jeff", range = 26, fov = 75, part = "HumanoidRootPart", smooth = 0.45, speed = 0, steer = false,
+			snap = {{"Attacks", "Lunge"}, {"Attacks", "BasicAttack"}}},
+		aim_veil = {label = "Veil", range = 130, fov = 45, part = "HumanoidRootPart", smooth = 0.35, speed = 100, steer = true,
+			snap = {{"Killers", "Veil", "Spearthrow"}}},
+		aim_cure = {label = "The Cure", range = 80, fov = 45, part = "HumanoidRootPart", smooth = 0.35, speed = 60, steer = true,
+			snap = {{"Killers", "Cure", "ThrowFlask"}}},
+	}
+	local ORDER = {"aim_jeff", "aim_veil", "aim_cure"}
+	local FACE_TIME = 0.45
+
+	local RemotesFolder = RS:WaitForChild("Remotes", 15)
+	if not RemotesFolder then return end
+
+	local function remote(path)
+		local o = RemotesFolder
+		for _, n in ipairs(path) do
+			if not o then return nil end
+			o = o:FindFirstChild(n)
+		end
+		return o
+	end
+
+	for _, prof in pairs(PROFILES) do
+		prof.remotes = {}
+		for _, path in ipairs(prof.snap) do
+			local r = remote(path)
+			if r then prof.remotes[#prof.remotes + 1] = r end
+		end
+	end
+
+	local function aliveHum(c)
+		local h = c and c:FindFirstChildOfClass("Humanoid")
+		if h and h.Health > 0 then return h end
+		return nil
+	end
+
+	local function imKiller()
+		local team = lp.Team
+		if team and team.Name == "Killer" then return true end
+		local c = lp.Character
+		return c ~= nil and c:GetAttribute("Killer") == true
+	end
+
+	local function activeKiller()
+		for _, id in ipairs(ORDER) do
+			if GUI:Get(id) then return id, PROFILES[id] end
+		end
+		return nil, nil
+	end
+
+	local function validSurvivor(p)
+		if p == lp then return false end
+		local team = p.Team
+		if not team or team.Name ~= "Survivors" then return false end
+		local c = p.Character
+		if not c or not aliveHum(c) then return false end
+		for _, k in ipairs({"Knocked", "IsHooked", "IsCarried", "IsDead", "Iframes"}) do
+			if c:GetAttribute(k) == true then return false end
+		end
+		return true
+	end
+
+	local function visible(cam, part)
+		local params = RaycastParams.new()
+		params.FilterType = Enum.RaycastFilterType.Exclude
+		params.FilterDescendantsInstances = {lp.Character, part.Parent}
+		local origin = cam.CFrame.Position
+		return workspace:Raycast(origin, part.Position - origin, params) == nil
+	end
+
+	local function pickTarget(cam, prof, wide)
+		local best, bestScore
+		local fov = wide and 120 or prof.fov
+		for _, p in ipairs(Players:GetPlayers()) do
+			if validSurvivor(p) then
+				local part = p.Character:FindFirstChild(prof.part) or p.Character:FindFirstChild("HumanoidRootPart")
+				if part then
+					local dir = part.Position - cam.CFrame.Position
+					local dist = dir.Magnitude
+					if dist > 0.1 and dist <= prof.range then
+						local ang = math.deg(math.acos(math.clamp(cam.CFrame.LookVector:Dot(dir.Unit), -1, 1)))
+						if ang <= fov then
+							local score = wide and dist or ang
+							if (not bestScore or score < bestScore) and visible(cam, part) then
+								best, bestScore = part, score
+							end
+						end
+					end
+				end
+			end
+		end
+		return best
+	end
+
+	local function aimPoint(part, prof, from)
+		local pos = part.Position
+		if prof.speed and prof.speed > 0 then
+			local dist = (pos - from).Magnitude
+			pos = pos + part.AssemblyLinearVelocity * (dist / prof.speed)
+		end
+		return pos
+	end
+
+	local function steerArgs(args, dir)
+		for i = 1, args.n do
+			local v = args[i]
+			local t = typeof(v)
+			if t == "Vector3" and v.Magnitude > 0.9 and v.Magnitude < 1.1 then
+				args[i] = dir
+			elseif t == "CFrame" then
+				args[i] = CFrame.new(v.Position, v.Position + dir)
+			end
+		end
+	end
+
+	local faceUntil = 0
+	local function snap(prof, remoteInst, args)
+		local cam = workspace.CurrentCamera
+		local c = lp.Character
+		local root = c and c:FindFirstChild("HumanoidRootPart")
+		if not (cam and root) or c:GetAttribute("IsCarrying") == true then return end
+		local part = pickTarget(cam, prof, true)
+		if not part then return end
+		local pos = aimPoint(part, prof, root.Position)
+		faceUntil = os.clock() + FACE_TIME
+		cam.CFrame = CFrame.new(cam.CFrame.Position, pos)
+		root.CFrame = CFrame.new(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z))
+		if prof.steer then
+			local delta = pos - root.Position
+			if delta.Magnitude > 0.1 then steerArgs(args, delta.Unit) end
+		end
+	end
+
+	local function handler(remoteInst, args)
+		local _, prof = activeKiller()
+		if not prof or not imKiller() then return nil end
+		for _, r in ipairs(prof.remotes) do
+			if r == remoteInst then
+				snap(prof, remoteInst, args)
+				return nil
+			end
+		end
+		return nil
+	end
+
+	if hookmetamethod and getnamecallmethod and newcclosure then
+		local old
+		old = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+			local m = getnamecallmethod()
+			if m == "FireServer" and not (checkcaller and checkcaller()) then
+				if typeof(self) == "Instance" then
+					local args = table.pack(...)
+					pcall(handler, self, args)
+					return old(self, table.unpack(args, 1, args.n))
+				end
+			end
+			return old(self, ...)
+		end))
+	end
+
+	RunService.RenderStepped:Connect(function()
+		if GUI.Closed then return end
+		local _, prof = activeKiller()
+		if not prof or not imKiller() then return end
+		local c = lp.Character
+		local root = c and c:FindFirstChild("HumanoidRootPart")
+		local cam = workspace.CurrentCamera
+		if not (root and cam) or c:GetAttribute("IsCarrying") == true then return end
+		local part = pickTarget(cam, prof, false)
+		if not part then return end
+		local pos = aimPoint(part, prof, cam.CFrame.Position)
+		cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, pos), prof.smooth)
+		if os.clock() < faceUntil then
+			root.CFrame = CFrame.new(root.Position, Vector3.new(pos.X, root.Position.Y, pos.Z))
+		end
+	end)
+
+	for _, id in ipairs(ORDER) do
+		GUI:OnChanged(id, function(on)
+			if not on then return end
+			for _, other in ipairs(ORDER) do
+				if other ~= id then GUI:Set(other, false) end
+			end
+		end)
+	end
+end)
+
+print("[VD Utility] Master Hub Full Version Loaded Successfully!")
 return GUI
