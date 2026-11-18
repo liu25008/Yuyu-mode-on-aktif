@@ -678,7 +678,7 @@ local CFG = {
 	OBJ_MAX_DIST = 300,      -- jarak maksimum untuk objek (pallet, window, generator, dll)
 	OBJ_FILL = 0.35,         -- transparansi warna di badan objek (0 = pekat, 1 = bening)
 	GEN_TEXT_SIZE = 16,      -- ukuran tulisan nama dan progres generator
-	MAX_HIGHLIGHTS = 28,     -- Roblox hanya menggambar sekitar 31 highlight sekaligus, objek terdekat didahulukan
+	MAX_HIGHLIGHTS = 30,     -- Roblox hanya menggambar sekitar 31 highlight sekaligus, objek terdekat didahulukan
 	PROG_WORDS = {"progress", "percent", "repair", "charge", "completion"}, -- nama sumber progres generator
 }
 
@@ -924,12 +924,44 @@ local function objectDistance(model, e, myR, match)
 	return d
 end
 
+-- Highlight hanya menggambar bagian yang kelihatan. Kalau model cuma berisi pemicu transparan
+-- (misal window), naik ke induk yang punya bentuk kelihatan.
+local function hasVisible(m)
+	if m:IsA("BasePart") and m.Transparency < 0.9 then return true end
+	for _, d in ipairs(m:GetDescendants()) do
+		if d:IsA("BasePart") and d.Transparency < 0.9 then return true end
+	end
+	return false
+end
+
+local noVisLogged = false
+local function resolveAdornee(model)
+	if hasVisible(model) then return model end
+	local p = model.Parent
+	for _ = 1, 3 do
+		if not p or p == workspace or not p:IsA("Model") then break end
+		if p:GetExtentsSize().Magnitude <= 40 and hasVisible(p) then return p end
+		p = p.Parent
+	end
+	if not noVisLogged and appendfile then
+		noVisLogged = true
+		local lines = {"tanpa bagian kelihatan: " .. model:GetFullName()}
+		for _, d in ipairs(model:GetDescendants()) do
+			if d:IsA("BasePart") then
+				lines[#lines + 1] = d.ClassName .. " " .. d.Name .. " transparansi=" .. tostring(d.Transparency)
+			end
+		end
+		pcall(appendfile, "VD_NoVisible.txt", table.concat(lines, "\n") .. "\n")
+	end
+	return model
+end
+
 local function showObject(model, e)
 	local cfg = KINDS[e.kind]
 	local color = GUI:Get(cfg.toggle .. "_color")
 	if not e.hl then
 		local hl = Instance.new("Highlight")
-		hl.Adornee = model
+		hl.Adornee = resolveAdornee(model)
 		hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
 		hl.FillTransparency = CFG.OBJ_FILL
 		hl.OutlineTransparency = 0
@@ -961,19 +993,42 @@ local function showObject(model, e)
 	e.label.Text = text
 end
 
--- objek terdekat didahulukan supaya tidak melewati batas highlight Roblox
+-- jatah highlight dibagi bergantian antar jenis (generator, pallet, window, dst), tiap jenis dari yang terdekat,
+-- supaya satu jenis tidak menghabiskan semua jatah
 local function updateObjects(myR, match, budget)
-	local list = {}
+	local byKind = {}
 	for model, e in pairs(entities) do
 		local d = objectDistance(model, e, myR, match)
-		if d then list[#list + 1] = {model = model, e = e, d = d} end
+		if d then
+			local l = byKind[e.kind]
+			if not l then
+				l = {}
+				byKind[e.kind] = l
+			end
+			l[#l + 1] = {model = model, e = e, d = d}
+		end
 	end
-	table.sort(list, function(a, b) return a.d < b.d end)
-	for i, it in ipairs(list) do
-		if i <= budget then
-			showObject(it.model, it.e)
-		else
-			hideObject(it.e)
+	local lists = {}
+	for _, l in pairs(byKind) do
+		table.sort(l, function(a, b) return a.d < b.d end)
+		lists[#lists + 1] = {items = l, i = 1}
+	end
+	local shown = 0
+	local progress = true
+	while progress do
+		progress = false
+		for _, L in ipairs(lists) do
+			local it = L.items[L.i]
+			if it then
+				L.i = L.i + 1
+				progress = true
+				if shown < budget then
+					shown = shown + 1
+					showObject(it.model, it.e)
+				else
+					hideObject(it.e)
+				end
+			end
 		end
 	end
 end
@@ -1369,8 +1424,8 @@ local CFG = {
 	PARRY_ANIM = "rbxassetid://109133187196613",
 	-- fast vault
 	FAST_ASSET = "rbxassetid://83873880822918",
-	FAST_VAULT_TIME = 0.65,    -- target durasi animasi vault (detik)
-	FAST_VAULT_MAX_ANIM = 2.2, -- batas percepatan animasi
+	FAST_VAULT_TIME = 0.5,     -- target durasi animasi vault (detik)
+	FAST_VAULT_MAX_ANIM = 8,   -- batas percepatan animasi
 	-- speed boost: besar tambahan diatur dari slider "Kecepatan tambahan" (0.1 sampai 3)
 	-- auto skill: batal menjawab kalau lo menjauh segini jauh (stud) dari generator atau teman
 	SKILL_ABORT_DIST = 25,
@@ -1664,9 +1719,9 @@ end
 local handled = {}
 local function markHandled(guid)
 	local now = os.clock()
-	handled[guid] = now
-	for k, t in pairs(handled) do
-		if now - t > 30 then handled[k] = nil end
+	handled[guid] = {t = now, drops = 0}
+	for k, h in pairs(handled) do
+		if now - h.t > 30 then handled[k] = nil end
 	end
 end
 
@@ -1680,6 +1735,12 @@ local function playerLeaving(target)
 	local hum, c = myHum(), myChar()
 	if not (hum and c) then return true end
 	if hum.MoveDirection.Magnitude > 0.1 then return true end
+	-- kontrol bisa dimatikan game saat repair/heal, jadi cek tombol gerak langsung juga
+	local uis = game:GetService("UserInputService")
+	for _, k in ipairs({Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
+		Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right}) do
+		if uis:IsKeyDown(k) then return true end
+	end
 	for _, k in ipairs({"Knocked", "IsHooked", "IsCarried"}) do
 		if c:GetAttribute(k) == true then return true end
 	end
@@ -1859,8 +1920,8 @@ local vaultState = nil
 local vaultWindow = 0 -- selama jendela ini aktif, remote yang dikirim dicatat ke VD_VaultLog.txt
 local vaultLogN = 0
 
-local function logVault(tag, rem, args)
-	if vaultLogN >= 80 or not appendfile then return end
+local function logVault(tag, rem, args, file)
+	if vaultLogN >= 150 or not appendfile then return end
 	vaultLogN = vaultLogN + 1
 	local parts = {}
 	for i = 1, args.n do
@@ -1878,7 +1939,7 @@ local function logVault(tag, rem, args)
 			parts[i] = t
 		end
 	end
-	pcall(appendfile, "VD_VaultLog.txt", string.format("%s %s (%s)\n", tag, rem.Name, table.concat(parts, ", ")))
+	pcall(appendfile, file or "VD_VaultLog.txt", string.format("%s %s (%s)\n", tag, rem.Name, table.concat(parts, ", ")))
 end
 
 local function handler(remote, args)
@@ -1897,21 +1958,35 @@ local function handler(remote, args)
 				if R.FastVault and vaultState then R.FastVault:FireServer(lp) end
 			end)
 		end
-	elseif remote == R.Traversal and vaultState and GUI:Get("fast_vault") then
-		if args[1] == "start" and type(args[2]) == "table" and os.clock() - vaultState.t < 1.2 then
+	elseif remote == R.Traversal and GUI:Get("fast_vault") and (vaultState or os.clock() < vaultWindow) then
+		if args[1] == "start" and type(args[2]) == "table"
+			and ((vaultState and os.clock() - vaultState.t < 1.2) or os.clock() < vaultWindow) then
 			local p = args[2]
 			p.moving = true
 			p.speed = 1
 			p.power = 1.2
 			p.asset = CFG.FAST_ASSET
-		elseif args[1] == "finish" and not vaultState.part then
+		elseif args[1] == "finish" and vaultState and not vaultState.part then
 			vaultState.part = true
 			if R.VaultPart1 then R.VaultPart1:FireServer(vaultState.guid, lp.Character) end
 		end
 	-- Auto Skill: buang hasil dari game untuk skill check yang sudah kita jawab
 	elseif remote == R.GenResult or remote == R.HealResult then
 		local guid = (remote == R.GenResult) and args[5] or args[4]
-		if type(guid) == "string" and handled[guid] then return "drop" end
+		if GUI:Get("auto_skill") then logVault("skill", remote, args, "VD_SkillLog.txt") end
+		-- hanya buang SATU hasil bawaan game per skill check, dan jangan sentuh sinyal keluar/batal
+		local h = type(guid) == "string" and handled[guid]
+		if h and h.drops < 1 and not playerLeaving(nil) then
+			local kind = type(args[1]) == "string" and args[1]:lower() or ""
+			local leaving = false
+			for _, w in ipairs({"cancel", "stop", "leave", "exit", "abort", "quit", "release", "end"}) do
+				if kind:find(w, 1, true) then leaving = true end
+			end
+			if not leaving then
+				h.drops = h.drops + 1
+				return "drop"
+			end
+		end
 	end
 	return nil
 end
@@ -1939,7 +2014,20 @@ if not env.VD_SURV_HOOKED then
 	end
 end
 
--- percepat animasi vault milik sendiri. Tidak bergantung pada hook remote: cukup atribut "isvaulting" menyala.
+-- apakah lo lagi dekat pemicu window (dipakai kalau atribut isvaulting tidak ada)
+local function nearVault()
+	local mr = myRoot()
+	if not mr then return false end
+	local ok, found = pcall(workspace.GetPartBoundsInRadius, workspace, mr.Position, 7)
+	if not ok then return false end
+	for _, p in ipairs(found) do
+		if p.Name == "VaultTrigger" then return true end
+	end
+	return false
+end
+
+-- percepat animasi vault milik sendiri. Tidak bergantung pada hook remote: cukup atribut "isvaulting" menyala
+-- atau lo berdiri dekat window saat animasi vault panjang diputar.
 local function boostVaultAnims(animator)
 	for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do
 		local prio = tr.Priority
@@ -1957,10 +2045,12 @@ local function hookMyAnimator(char)
 	hooked[animator] = true
 	connect(animator.AnimationPlayed, function(track)
 		if not GUI:Get("fast_vault") then return end
-		local vaulting = (vaultState and os.clock() - vaultState.t < 0.8) or char:GetAttribute("isvaulting") == true
-		if not vaulting or track.Looped or track.Length < 0.8 then return end
+		if track.Looped or track.Length < 0.8 then return end
 		local prio = track.Priority
 		if prio == Enum.AnimationPriority.Core or prio == Enum.AnimationPriority.Idle or prio == Enum.AnimationPriority.Movement then return end
+		local vaulting = (vaultState and os.clock() - vaultState.t < 0.8) or char:GetAttribute("isvaulting") == true or nearVault()
+		if not vaulting then return end
+		vaultWindow = math.max(vaultWindow, os.clock() + 2)
 		track:AdjustSpeed(math.clamp(track.Length / CFG.FAST_VAULT_TIME, 1, CFG.FAST_VAULT_MAX_ANIM))
 	end)
 	connect(char:GetAttributeChangedSignal("isvaulting"), function()
@@ -1983,6 +2073,11 @@ connect(lp.CharacterAdded, function(c) task.spawn(hookMyAnimator, c) end)
 
 -- ===== SPEED BOOST =====
 local lastSet, gameWS = nil, nil
+-- WalkSpeed disimpan sebagai float32, jadi 16.1 kembali sebagai 16.100000381. Bandingkan dengan toleransi,
+-- kalau tidak, tambahan kecepatan menumpuk tiap frame.
+local function sameSpeed(a, b)
+	return b ~= nil and math.abs(a - b) < 0.02
+end
 
 local function speedBlocked(c)
 	for _, k in ipairs({"isvaulting", "Knocked", "IsHooked", "IsCarried", "Immobile", "Crouching", "IsStunned"}) do
@@ -1997,11 +2092,11 @@ local function speedStep()
 	local hum, c = myHum(), myChar()
 	if not (hum and c) then return end
 	if not GUI:Get("speed_boost") or speedBlocked(c) then
-		if lastSet and hum.WalkSpeed == lastSet and gameWS then hum.WalkSpeed = gameWS end
+		if lastSet and sameSpeed(hum.WalkSpeed, lastSet) and gameWS then hum.WalkSpeed = gameWS end
 		lastSet = nil
 		return
 	end
-	if lastSet == nil or hum.WalkSpeed ~= lastSet then
+	if lastSet == nil or not sameSpeed(hum.WalkSpeed, lastSet) then
 		gameWS = hum.WalkSpeed -- nilai asli dari game
 	end
 	local target = gameWS + (tonumber(GUI:Get("speed_value")) or 1)
@@ -2198,7 +2293,7 @@ local function cleanup()
 	for _, c in ipairs(conns) do pcall(function() c:Disconnect() end) end
 	conns = {}
 	local hum = myHum()
-	if hum and lastSet and hum.WalkSpeed == lastSet and gameWS then hum.WalkSpeed = gameWS end
+	if hum and lastSet and sameSpeed(hum.WalkSpeed, lastSet) and gameWS then hum.WalkSpeed = gameWS end
 	pcall(function() RunService:UnbindFromRenderStep("VDNeedle") end)
 	if crouchTrack then pcall(function() crouchTrack:Stop() end) end
 	if env.VD_SURV_HANDLER == handler then env.VD_SURV_HANDLER = nil end
