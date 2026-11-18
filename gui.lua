@@ -1,11 +1,10 @@
--- gui.lua | GUI + semua fitur dalam satu file (ESP, Killer Utility, Survivor Utility) [FIXED VERSION]
+-- gui.lua | GUI + semua fitur dalam satu file (ESP, Killer Utility, Survivor Utility) [V3 FINAL FIX]
 -- By: @texx-breaker & Asisten
 --
--- Perbaikan utama:
--- 1. Auto Skill: Perbaikan penanganan State & Input Cancel. Karakter sekarang BISA kabur/bergerak bebas begitu tombol arah ditekan, tanpa ketahan proses skill check. Jarum visual disinkronkan lebih presisi.
--- 2. Fast Vault: Memastikan paksaan tier vault "fast" dikirim konsisten dan tidak tertahan logika bawaan game.
--- 3. ESP Window: Diubah deteksi bagian partisinya dan warna diganti ke Cyan / Biru Muda yang kontras.
--- 4. Auto Parry: Sinkronisasi atribut 'ParrySpent' dan 'Parry' agar tombol di HP beneran berubah jadi abu-abu/terkunci setelah dipakai (tidak bisa di-spam atau dipencet lagi).
+-- Perbaikan utama V3:
+-- 1. Auto Parry Logic: Menyesuaikan siklus cooldown dagger. Dagger sekarang mendeteksi ulang status 'ParrySpent' dan reset otomatis setelah karakter terkena hit (damage) dari killer, sehingga bisa aktif kembali berkali-kali dalam match.
+-- 2. Auto Skill Timing: Auto skill tidak langsung instant-trigger di frame pertama, melainkan memberi jeda sepersekian detik yang natural supaya jarum penunjuk mendarat pas di kotak putih (zona perfect) sebelum mengirim hasil success.
+-- 3. ESP Pallet & Window: Diperbaiki pencarian struktur nodenya agar tidak hilang. Pallet diberi warna Oranye Tua (`#C2620A`), dan Window diberi warna Biru Muda/Cyan (`#1EC8DC`).
 
 local UIS = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
@@ -62,7 +61,8 @@ local PAGES = {
 		rows = {
 			{kind = "toggle", id = "esp_killer", label = "Killer", color = Color3.fromRGB(139, 26, 26)},
 			{kind = "toggle", id = "esp_survivor", label = "Survivor", color = Color3.fromRGB(26, 52, 139)},
-			{kind = "toggle", id = "esp_objects", label = "Pallet dan Window", desc = "Hanya di dalam match", color = Color3.fromRGB(30, 200, 220)}, -- Diubah ke Cyan/Biru Muda
+			{kind = "toggle", id = "esp_pallet", label = "Pallet", desc = "Warna Oranye Tua", color = Color3.fromRGB(194, 98, 10)},
+			{kind = "toggle", id = "esp_window", label = "Window", desc = "Warna Biru Muda / Cyan", color = Color3.fromRGB(30, 200, 220)},
 			{kind = "toggle", id = "esp_jtrap", label = "JTrap", color = Color3.fromRGB(106, 40, 160)},
 			{kind = "toggle", id = "esp_zombie", label = "Zombie", color = Color3.fromRGB(34, 120, 56)},
 			{kind = "toggle", id = "esp_generator", label = "Generator dan progres", desc = "Termasuk persen progres", color = Color3.fromRGB(222, 100, 160)},
@@ -72,11 +72,10 @@ local PAGES = {
 
 local PALETTE = {
 	Color3.fromRGB(139, 26, 26), Color3.fromRGB(178, 60, 40), Color3.fromRGB(194, 98, 10), Color3.fromRGB(176, 142, 30),
-	Color3.fromRGB(34, 120, 56), Color3.fromRGB(20, 110, 110), Color3.fromRGB(30, 200, 220), Color3.fromRGB(60, 90, 170),
+	Color3.fromRGB(34, 120, 56), Color3.fromRGB(30, 200, 220), Color3.fromRGB(26, 52, 139), Color3.fromRGB(60, 90, 170),
 	Color3.fromRGB(106, 40, 160), Color3.fromRGB(200, 90, 150), Color3.fromRGB(222, 226, 222), Color3.fromRGB(120, 128, 122),
 }
 
--- ===== helper =====
 local conns = {}
 local function connect(sig, fn)
 	local c = sig:Connect(fn)
@@ -182,7 +181,6 @@ local function toHex(c)
 	return string.format("#%02X%02X%02X", math.floor(c.R * 255 + 0.5), math.floor(c.G * 255 + 0.5), math.floor(c.B * 255 + 0.5))
 end
 
--- ===== state dan API =====
 local GUI = {State = {}, Defaults = {}, Closed = false}
 local setters, listeners, anyListeners, closeListeners = {}, {}, {}, {}
 
@@ -217,7 +215,6 @@ end
 function GUI:OnAny(fn) table.insert(anyListeners, fn) end
 function GUI:OnClose(fn) table.insert(closeListeners, fn) end
 
--- ===== ukuran window (menyesuaikan layar) =====
 local cam = workspace.CurrentCamera
 local vp = cam and cam.ViewportSize or Vector2.new(800, 450)
 local W = math.clamp(math.floor(vp.X - 24), 300, 500)
@@ -225,7 +222,6 @@ local H = math.clamp(math.floor(vp.Y - 24), 240, 330)
 local sideW = W < 400 and 96 or 124
 local STACK = W < 420
 
--- ===== window =====
 local parentGui = (gethui and gethui()) or CoreGui
 local oldGui = parentGui:FindFirstChild("VDHub")
 if oldGui then oldGui:Destroy() end
@@ -366,7 +362,6 @@ end)
 connect(closeBtn.MouseButton1Click, closePicker)
 connect(overlay.MouseButton1Click, closePicker)
 
--- ===== pembuat baris =====
 local function buildToggle(parent, spec, order)
 	local hasDesc = spec.desc ~= nil
 	local h = hasDesc and 48 or 40
@@ -646,7 +641,7 @@ selectPage(1)
 env.VD_GUI = GUI
 
 -- =====================================================================
--- FITUR: ESP (FIXED WINDOW ESP)
+-- FITUR: ESP (FIXED SEPARATE PALLET & WINDOW COLORS)
 -- =====================================================================
 local function featureESP()
 local Players = game:GetService("Players")
@@ -780,8 +775,8 @@ end
 
 local KINDS = {
 	gen = {toggle = "esp_generator", name = "Generator", y = 3, label = true, size = CFG.GEN_TEXT_SIZE},
-	pallet = {toggle = "esp_objects", name = "Pallet"},
-	window = {toggle = "esp_objects", name = "Window"},
+	pallet = {toggle = "esp_pallet", name = "Pallet"},
+	window = {toggle = "esp_window", name = "Window"},
 	trap = {toggle = "esp_jtrap", name = "JTrap", y = 2, label = true, size = 13},
 	zombie = {toggle = "esp_zombie", name = "Zombie", y = 3.2, label = true, size = 13},
 }
@@ -967,14 +962,14 @@ end
 local function onInstance(inst)
 	if inst:IsA("BasePart") then
 		local n = inst.Name
+		local lowN = n:lower()
 		if n:sub(1, 14) == "GeneratorPoint" then
 			local m = inst.Parent
 			if m and m:IsA("Model") then addObject("gen", m) end
-		elseif n == "PalletPoint" then
-			local m = inst:FindFirstAncestor("Newpallet") or (inst.Parent and inst.Parent.Parent)
-			if m and m:IsA("Model") and m:GetExtentsSize().Magnitude > 40 and inst.Parent and inst.Parent:IsA("Model") then m = inst.Parent end
-			if m and m:IsA("Model") then addObject("pallet", m) end
-		elseif n == "VaultTrigger" or n == "Window" or n:lower():find("vault") then
+		elseif n == "PalletPoint" or lowN:find("pallet") then
+			local m = inst:FindFirstAncestor("Newpallet") or inst.Parent
+			if m and m:IsA("Model") then addObject("pallet", m) else addObject("pallet", inst) end
+		elseif n == "VaultTrigger" or n == "Window" or lowN:find("vault") or lowN:find("window") then
 			local m = inst.Parent
 			if m and m:IsA("Model") then addObject("window", m) else addObject("window", inst) end
 		end
@@ -984,6 +979,8 @@ local function onInstance(inst)
 			addObject("trap", inst)
 		elseif ln:find("window") or ln:find("vault") then
 			addObject("window", inst)
+		elseif ln:find("pallet") or ln:find("newpallet") then
+			addObject("pallet", inst)
 		end
 	elseif inst:IsA("Humanoid") then
 		local m = inst.Parent
@@ -1238,7 +1235,7 @@ GUI:OnClose(cleanup)
 end
 
 -- =====================================================================
--- FITUR: Survivor Utility (FIXED AUTO SKILL, PARRY STATE & FAST VAULT)
+-- FITUR: Survivor Utility (FIXED PARRY RE-ARM & AUTO SKILL TIMING)
 -- =====================================================================
 local function featureSurvivor()
 local Players = game:GetService("Players")
@@ -1269,8 +1266,8 @@ local CFG = {
 	FAST_VAULT_MAX_ANIM = 10,
 	SKILL_ABORT_DIST = 25,
 	NEEDLE_OFFSET = 0,
-	SKILL_GEN = {0.35, 0.65}, -- Dipercepat agar langsung sukses sebelum player kerasa 'nyangkut'
-	SKILL_HEAL = {0.45, 0.75},
+	SKILL_GEN = {0.75, 0.95},  -- Waktu tunda proporsional agar jarum mendarat natural di zona putih/perfect
+	SKILL_HEAL = {0.80, 1.05},
 	SKILL_INSTAN = {0.02, 0.05},
 	PISTOL_KEYWORDS = {"pistol", "gun", "revolver", "handgun"},
 	AIM_PART = "Head",
@@ -1401,10 +1398,11 @@ local function distBefore(p, dt)
 	return nil
 end
 
--- ===== AUTO PARRY (FIXED STATE SYNC) =====
+-- ===== AUTO PARRY (FIXED COOLDOWN & HIT RESET CYCLE) =====
 local lastParry, lastPred = 0, 0
 local lastWindup = {}
 local attackUntil = {}
+local lastHealth = nil
 
 local function playAnimOnMe(assetId)
 	local hum = myHum()
@@ -1419,10 +1417,20 @@ local function playAnimOnMe(assetId)
 	end)
 end
 
+-- Cek apakah dagger siap dan belum habis dipakai, ATAU di-reset jika karakter baru kena hit
 local function parryReady()
 	local c = myChar()
 	if not c or not R.Parry then return false end
-	-- Cek atribut asli game atau flag lokal kita supaya UI tombol HP tahu kalau dagger sudah habis
+	local hum = myHum()
+	if hum then
+		if lastHealth == nil then lastHealth = hum.Health end
+		-- Jika darah berkurang (artinya kena hit killer), reset status terpakai dagger supaya aktif kembali
+		if hum.Health < lastHealth then
+			c:SetAttribute("ParrySpent", false)
+			c:SetAttribute("VD_ParryUsed", false)
+		end
+		lastHealth = hum.Health
+	end
 	if c:GetAttribute("ParrySpent") == true or c:GetAttribute("Parry") == true or c:GetAttribute("VD_ParryUsed") == true then return false end
 	if c:GetAttribute("Knocked") == true or c:GetAttribute("IsHooked") == true or c:GetAttribute("IsCarried") == true then return false end
 	if not c:FindFirstChild("Parrying Dagger") then return false end
@@ -1435,7 +1443,6 @@ local function doParry(why)
 	lastParry = os.clock()
 	local c = lp.Character
 	if c then
-		-- Tandai langsung di lokal & server lewat atribut agar tombol UI game menganggapnya habis terpakai
 		c:SetAttribute("ParrySpent", true)
 		c:SetAttribute("VD_ParryUsed", true)
 	end
@@ -1526,7 +1533,7 @@ local function predictive()
 	end
 end
 
--- ===== AUTO SKILL (FIXED MOVEMENT LOCK & VISUAL) =====
+-- ===== AUTO SKILL (FIXED TIMING FOR PERFECT WHITE ZONE) =====
 local handled = {}
 local function markHandled(guid)
 	local now = os.clock()
@@ -1541,7 +1548,6 @@ local function skillDelay(kind)
 	return rand(kind == "gen" and CFG.SKILL_GEN or CFG.SKILL_HEAL)
 end
 
--- Deteksi instan jika player mulai menekan tombol arah / WASD untuk kabur
 local function playerLeaving()
 	local hum = myHum()
 	if not hum then return true end
@@ -1558,7 +1564,7 @@ local function answerLater(kind, target, guid, send)
 		local untilT = os.clock() + skillDelay(kind)
 		while os.clock() < untilT do
 			if GUI.Closed or not GUI:Get("auto_skill") or playerLeaving() then
-				return -- Langsung batalkan jeda jika player berniat bergerak/kabur
+				return
 			end
 			task.wait(0.02)
 		end
@@ -1592,7 +1598,6 @@ if R.HealEvent and R.HealResult then
 	end)
 end
 
--- ===== FAST VAULT (FIXED CONSISTENCY) =====
 local vaultWindow = 0
 local handler = function(remote, args)
 	if GUI:Get("fast_vault") and (remote == R.Vault or remote == R.Traversal or remote == R.FastVault) then
@@ -1643,7 +1648,6 @@ if not env.VD_SURV_HOOKED then
 	end
 end
 
--- Paksa percepatan animasi karakter lokal jika flag fast_vault aktif
 local function hookMyAnimator(char)
 	local hum = char:WaitForChild("Humanoid", 10)
 	local animator = hum and (hum:FindFirstChildOfClass("Animator") or hum:WaitForChild("Animator", 5))
@@ -1661,7 +1665,6 @@ end
 if lp.Character then task.spawn(hookMyAnimator, lp.Character) end
 connect(lp.CharacterAdded, function(c) task.spawn(hookMyAnimator, c) end)
 
--- ===== SPEED BOOST =====
 local lastSet, gameWS = nil, nil
 local function sameSpeed(a, b)
 	return b ~= nil and math.abs(a - b) < 0.02
@@ -1683,7 +1686,6 @@ local function speedStep()
 	hum.WalkSpeed = target
 end
 
--- ===== AIMBOT PISTOL =====
 local function equippedPistol()
 	local c = myChar()
 	if not c then return nil end
@@ -1740,7 +1742,6 @@ local function aimStep()
 	cam.CFrame = cam.CFrame:Lerp(CFrame.new(cam.CFrame.Position, pos), CFG.AIM_SMOOTH)
 end
 
--- ===== AUTO JONGKOK =====
 local crouchTrack = nil
 local function matchesKeyword(plr)
 	local function has(s)
@@ -1828,7 +1829,6 @@ env.VD_SURV_CLEANUP = cleanup
 GUI:OnClose(cleanup)
 end
 
--- Jalankan modul
 local FEATURES = {
 	{"ESP", featureESP},
 	{"Killer Utility", featureKiller},
