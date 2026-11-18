@@ -1,4 +1,4 @@
--- gui.lua | GUI + semua fitur dalam satu file (ESP Clean, Killer Utility, Survivor Utility Fix) [ALL-IN-ONE FINAL V4]
+-- gui.lua | All-In-One Script Final V6 (Log-based Fast Vault Bypass, Unstuck Auto Skill, Clean ESP)
 -- By: @texx-breaker & Asisten
 
 local UIS = game:GetService("UserInputService")
@@ -636,7 +636,7 @@ selectPage(1)
 env.VD_GUI = GUI
 
 -- =====================================================================
--- FITUR: ESP (Clean Highlight Tanpa Kotak & Tanpa Teks Objek)
+-- FITUR: ESP
 -- =====================================================================
 local function featureESP()
 local Players = game:GetService("Players")
@@ -763,7 +763,7 @@ local function updatePlayer(p, myR)
 end
 
 local KINDS = {
-	gen = {toggle = "esp_generator"},
+	gen = {toggle = "esp_generator", name = "Generator", y = 3, label = true},
 	pallet = {toggle = "esp_pallet"},
 	window = {toggle = "esp_window"},
 	trap = {toggle = "esp_jtrap"},
@@ -773,6 +773,7 @@ local entities = {}
 
 local function hideObject(e)
 	if e.hl then pcall(function() e.hl:Destroy() end) e.hl = nil end
+	if e.bb then pcall(function() e.bb:Destroy() end) e.bb = nil end
 	e.color = nil
 end
 
@@ -786,7 +787,7 @@ end
 
 local function addObject(kind, model)
 	if entities[model] or not model.Parent then return end
-	local e = {kind = kind, model = model}
+	local e = {kind = kind, model = model, nextProg = 0}
 	entities[model] = e
 	e.conn = model.AncestryChanged:Connect(function()
 		if not model:IsDescendantOf(workspace) then dropObject(model) end
@@ -805,6 +806,48 @@ local function resolveAdornee(model)
 	if model:IsA("BasePart") then return model end
 	local part = model:FindFirstChild("MeshPart") or model:FindFirstChild("Part") or model:FindFirstChildWhichIsA("BasePart", true)
 	return part or model
+end
+
+local function looksLikeProgress(n)
+	n = n:lower()
+	for _, w in ipairs(CFG.PROG_WORDS) do
+		if n:find(w, 1, true) then return true end
+	end
+	return false
+end
+
+local function toPercent(v)
+	if type(v) ~= "number" then return nil end
+	if v >= 0 and v <= 1.0001 then return v * 100 end
+	if v > 1 and v <= 100 then return v end
+	return nil
+end
+
+local function findProgressSource(model)
+	for k, v in pairs(model:GetAttributes()) do
+		if looksLikeProgress(k) and toPercent(v) then return {t = "attr", inst = model, key = k} end
+	end
+	for _, d in ipairs(model:GetDescendants()) do
+		if (d:IsA("NumberValue") or d:IsA("IntValue")) and looksLikeProgress(d.Name) then
+			return {t = "val", inst = d}
+		end
+		for k, v in pairs(d:GetAttributes()) do
+			if looksLikeProgress(k) and toPercent(v) then return {t = "attr", inst = d, key = k} end
+		end
+		if d:IsA("TextLabel") and d.Text:match("%d+%.?%d*%%") then
+			return {t = "text", inst = d}
+		end
+	end
+	return nil
+end
+
+local function readProgress(src)
+	if not src or not src.inst or not src.inst.Parent then return nil end
+	if src.t == "attr" then return toPercent(src.inst:GetAttribute(src.key)) end
+	if src.t == "val" then return toPercent(src.inst.Value) end
+	local n = tonumber(src.inst.Text:match("(%d+%.?%d*)%%"))
+	if n and n <= 100 then return n end
+	return nil
 end
 
 local function updateObject(model, e, myR, match)
@@ -833,12 +876,29 @@ local function updateObject(model, e, myR, match)
 		hl.OutlineTransparency = 0
 		hl.Parent = folder
 		e.hl = hl
+		if cfg.label then
+			local bb, tl = makeLabel(part, cfg.y)
+			e.bb, e.label = bb, tl
+		end
 		e.color = nil
 	end
 	if e.color ~= color then
 		e.color = color
 		e.hl.FillColor = color
 		e.hl.OutlineColor = color
+		if e.label then e.label.TextColor3 = labelColor(color) end
+	end
+	if e.label then
+		local text = cfg.name
+		if e.kind == "gen" then
+			if not e.src and os.clock() >= e.nextProg then
+				e.nextProg = os.clock() + 3
+				e.src = findProgressSource(model)
+			end
+			local pct = readProgress(e.src)
+			if pct then text = string.format("%s %d%%", cfg.name, math.floor(pct + 0.5)) end
+		end
+		e.label.Text = text
 	end
 end
 
@@ -849,8 +909,8 @@ local function onInstance(inst)
 		if n:sub(1, 14) == "GeneratorPoint" then
 			local m = inst.Parent
 			if m and m:IsA("Model") then addObject("gen", m) end
-		elseif n == "PalletPoint" or lowN:find("pallet") then
-			local m = inst:FindFirstAncestor("Newpallet") or inst.Parent
+		elseif n == "PalletPoint" or lowN:find("pallet") or lowN:find("newpallet") then
+			local m = inst:FindFirstAncestor("Newpallet") or inst:FindFirstAncestorOfClass("Model") or inst.Parent
 			if m and m:IsA("Model") then addObject("pallet", m) else addObject("pallet", inst) end
 		elseif n == "VaultTrigger" or n == "Window" or lowN:find("vault") or lowN:find("window") then
 			local m = inst.Parent
@@ -1113,7 +1173,7 @@ GUI:OnClose(cleanup)
 end
 
 -- =====================================================================
--- FITUR: Survivor Utility (Real Button Trigger & Alignment Fast Vault Fix)
+-- FITUR: Survivor Utility (Final V6)
 -- =====================================================================
 local function featureSurvivor()
 local Players = game:GetService("Players")
@@ -1154,8 +1214,6 @@ local CFG = {
 	KILLER_KEYWORDS = {"abyss", "abby"},
 	CROUCH_RANGE = 40,
 	STAND_RANGE = 52,
-	CROUCH_SPEED_CAP = 4,
-	CROUCH_ANIM = "rbxassetid://107190870183828",
 }
 
 local WINDUP = {
@@ -1172,13 +1230,6 @@ local function connectSig(sig, fn)
 	local c = sig:Connect(fn)
 	conns[#conns + 1] = c
 	return c
-end
-
-local function note(msg)
-	print("[VD] " .. msg)
-	pcall(function()
-		StarterGui:SetCore("SendNotification", {Title = "VD Utility", Text = msg, Duration = 4})
-	end)
 end
 
 local RemotesFolder = RS:WaitForChild("Remotes", 15)
@@ -1322,18 +1373,23 @@ local function pressButton(btn)
 	return fired
 end
 
+local function checkParryReset()
+	local c = myChar()
+	local hum = myHum()
+	if not (c and hum) then return end
+	if lastHealth == nil then lastHealth = hum.Health end
+	if hum.Health < lastHealth or c:GetAttribute("Hurt") == true or c:GetAttribute("Stunned") == true then
+		c:SetAttribute("ParrySpent", false)
+		c:SetAttribute("VD_ParryUsed", false)
+		c:SetAttribute("Parry", false)
+	end
+	lastHealth = hum.Health
+end
+
 local function parryReady()
+	checkParryReset()
 	local c = myChar()
 	if not c then return false end
-	local hum = myHum()
-	if hum then
-		if lastHealth == nil then lastHealth = hum.Health end
-		if hum.Health < lastHealth then
-			c:SetAttribute("ParrySpent", false)
-			c:SetAttribute("VD_ParryUsed", false)
-		end
-		lastHealth = hum.Health
-	end
 	if c:GetAttribute("ParrySpent") == true or c:GetAttribute("Parry") == true or c:GetAttribute("VD_ParryUsed") == true then return false end
 	if c:GetAttribute("Knocked") == true or c:GetAttribute("IsHooked") == true or c:GetAttribute("IsCarried") == true then return false end
 	local tool = c:FindFirstChild("Parrying Dagger")
@@ -1354,13 +1410,6 @@ local function doParry(why)
 	if btn and pressButton(btn) then
 		if CFG.PLAY_PARRY_ANIM then playAnimOnMe(CFG.PARRY_ANIM) end
 		return
-	end
-	local tool = c and c:FindFirstChild("Parrying Dagger")
-	if tool and tool:IsA("Tool") then
-		tool.Parent = workspace
-		task.delay(0.05, function()
-			if tool and tool.Parent == workspace and c then tool.Parent = c end
-		end)
 	end
 	if R.Parry then R.Parry:FireServer(c) end
 	if CFG.PLAY_PARRY_ANIM then playAnimOnMe(CFG.PARRY_ANIM) end
@@ -1466,7 +1515,7 @@ end
 local function playerLeaving()
 	local hum = myHum()
 	if not hum then return true end
-	if hum.MoveDirection.Magnitude > 0.1 then return true end
+	if hum.MoveDirection.Magnitude > 0.15 then return true end
 	for _, k in ipairs({Enum.KeyCode.W, Enum.KeyCode.A, Enum.KeyCode.S, Enum.KeyCode.D,
 		Enum.KeyCode.Up, Enum.KeyCode.Down, Enum.KeyCode.Left, Enum.KeyCode.Right}) do
 		if UIS:IsKeyDown(k) then return true end
@@ -1479,9 +1528,9 @@ local function answerLater(kind, guid, send)
 		local untilT = os.clock() + skillDelay(kind)
 		while os.clock() < untilT do
 			if GUI.Closed or not GUI:Get("auto_skill") or playerLeaving() then return end
-			task.wait(0.02)
+			task.wait(0.01)
 		end
-		if GUI.Closed or not GUI:Get("auto_skill") then return end
+		if GUI.Closed or not GUI:Get("auto_skill") or playerLeaving() then return end
 		markHandled(guid)
 		send()
 	end)
@@ -1512,21 +1561,24 @@ end
 
 local vaultWindow = 0
 local handler = function(remote, args)
-	if remote == R.Vault and GUI:Get("fast_vault") then
-		if args.n >= 5 then
+	if (remote == R.Vault or remote == R.VaultPart1) and GUI:Get("fast_vault") then
+		vaultWindow = os.clock() + 1.5
+		task.defer(function()
+			if R.FastVault then R.FastVault:FireServer(lp) end
+		end)
+		if args.n >= 2 then
 			args[2] = true
-			args[5] = "fast"
-			vaultWindow = os.clock() + 1.5
-			task.defer(function()
-				if R.FastVault then R.FastVault:FireServer(lp) end
-			end)
+			if args.n >= 5 then args[5] = "fast" end
 		end
 	elseif remote == R.Traversal and GUI:Get("fast_vault") then
-		if args[1] == "start" and type(args[2]) == "table" then
-			args[2].moving = true
-			args[2].speed = 1.2
-			args[2].power = 1.5
-			args[2].asset = CFG.FAST_ASSET
+		if args[1] == "prepare" or args[1] == "start" then
+			args[1] = "start"
+			if type(args[2]) == "table" then
+				args[2].moving = true
+				args[2].speed = 1.2
+				args[2].power = 1.5
+				args[2].asset = CFG.FAST_ASSET
+			end
 		end
 	elseif remote == R.GenResult or remote == R.HealResult then
 		local guid = (remote == R.GenResult) and args[5] or args[4]
@@ -1721,6 +1773,7 @@ connect(RunService.Heartbeat, function(dt)
 		sample()
 		predictive()
 		crouchStep()
+		checkParryReset()
 	end
 end)
 connect(RunService.RenderStepped, function()
@@ -1744,5 +1797,5 @@ task.spawn(function() pcall(featureESP) end)
 task.spawn(function() pcall(featureKiller) end)
 task.spawn(function() pcall(featureSurvivor) end)
 
-print("[VD Utility] Berhasil disuntikkan penuh (Final V4)!")
+print("[VD Utility] Berhasil disuntikkan penuh (Final V6)!")
 return GUI
