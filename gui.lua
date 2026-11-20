@@ -1499,7 +1499,7 @@ end
 
 -- =====================================================================
 -- FITUR: Survivor Utility
--- Auto Parry, Anti Fake Hit, Fast Vault, Speed Boost, Auto Skill, Aimbot Pistol, Auto Jongkok.
+-- Auto Parry, Anti Fake Hit, Fast Vault, Speed Boost, Auto Skill, Aimbot Pistol, Auto Jongkok. Data diagnosa ke VD_Diag.txt.
 -- =====================================================================
 local function featureSurvivor()
 local Players = game:GetService("Players")
@@ -1516,6 +1516,8 @@ if env.VD_SURV_CLEANUP then pcall(env.VD_SURV_CLEANUP) end
 
 -- ===== pengaturan =====
 local CFG = {
+	DIAG = true,               -- catat data diagnosa ke VD_Diag.txt (skill check, parry, vault)
+	PARRY_NATIVE = false,      -- jalur tombol item/tombol layar; belum terbukti di Delta, jadi mati. Parry lewat remote seperti semula
 	-- parry
 	MAX_DIST = 14,             -- jarak maksimum killer (tanpa Anti Fake Hit)
 	FAKE_MAX_DIST = 10.5,      -- jarak maksimum (dengan Anti Fake Hit), dari data: sukses sampai 10.4
@@ -1735,6 +1737,68 @@ local function pressBinding(action)
 	return name
 end
 
+-- ===== diagnosa: semua data dicatat ke VD_Diag.txt =====
+local CAS = game:GetService("ContextActionService")
+local diagCount = 0
+local function diag(tag, text)
+	if not CFG.DIAG or diagCount >= 600 or not appendfile then return end
+	diagCount = diagCount + 1
+	pcall(appendfile, "VD_Diag.txt", string.format("[%.2f][%s] %s\n", os.clock() % 100000, tag, text))
+end
+if CFG.DIAG and writefile then pcall(writefile, "VD_Diag.txt", "") end
+
+local function controlsEnabled()
+	local ps = lp:FindFirstChild("PlayerScripts")
+	local pm = ps and ps:FindFirstChild("PlayerModule")
+	if not pm then return "?" end
+	local ok, mod = pcall(require, pm)
+	if not ok or type(mod) ~= "table" or not mod.GetControls then return "?" end
+	local ok2, ctrl = pcall(mod.GetControls, mod)
+	if not ok2 or not ctrl then return "?" end
+	local ok3, v = pcall(function() return ctrl.controlsEnabled end)
+	return ok3 and tostring(v) or "?"
+end
+
+local function boundActions()
+	local names = {}
+	pcall(function()
+		for name, info in pairs(CAS:GetAllBoundActionInfo()) do
+			names[#names + 1] = name .. "(" .. tostring(info.priority) .. ")"
+		end
+	end)
+	table.sort(names)
+	return table.concat(names, ",")
+end
+
+local function snapshotState(tag)
+	local hum, ch, root = myHum(), myChar(), myRoot()
+	local parts = {}
+	if hum then
+		parts[#parts + 1] = string.format("WalkSpeed=%.2f PlatformStand=%s AutoRotate=%s Gerak=%.2f",
+			hum.WalkSpeed, tostring(hum.PlatformStand), tostring(hum.AutoRotate), hum.MoveDirection.Magnitude)
+	end
+	if root then parts[#parts + 1] = "Anchored=" .. tostring(root.Anchored) end
+	if ch then
+		for _, k in ipairs({"Immobile", "MovementLocked", "IsStunned", "Rooted", "Crouching", "Sprinting", "lock_repair", "lock_heal"}) do
+			local v = ch:GetAttribute(k)
+			if v ~= nil then parts[#parts + 1] = k .. "=" .. tostring(v) end
+		end
+		local controller = ch:FindFirstChild("CheckInterractable")
+		if controller then
+			parts[#parts + 1] = "isRepairing=" .. tostring(controller:GetAttribute("isRepairing"))
+			parts[#parts + 1] = "isHealing=" .. tostring(controller:GetAttribute("isHealing"))
+		end
+	end
+	parts[#parts + 1] = "controlsEnabled=" .. controlsEnabled()
+	parts[#parts + 1] = "CAS=" .. boundActions()
+	diag(tag, table.concat(parts, " | "))
+end
+
+diag("info", "VIM=" .. tostring(VIM ~= nil) .. " getgc=" .. tostring(type(getgc) == "function")
+	.. " getconnections=" .. tostring(getconnections ~= nil) .. " firesignal=" .. tostring(firesignal ~= nil)
+	.. " hookmetamethod=" .. tostring(hookmetamethod ~= nil) .. " checkcaller=" .. tostring(checkcaller ~= nil)
+	.. " appendfile=" .. tostring(appendfile ~= nil))
+
 -- ===== riwayat jarak killer =====
 local hist = {}
 local function sample()
@@ -1846,20 +1910,10 @@ end
 
 local function parryReady()
 	local c = myChar()
-	if not c or not R.Parry then return false end
-	if c:GetAttribute("Parry") == true then return false end
-	if c:GetAttribute("Knocked") == true or c:GetAttribute("IsHooked") == true or c:GetAttribute("IsCarried") == true then return false end
-	local ctl = findParryController()
-	if ctl then
-		-- CanUse() adalah cek cooldown dan status item milik game sendiri
-		if type(ctl.CanUse) == "function" then
-			local ok, can = pcall(ctl.CanUse, ctl)
-			if ok and not can then return false end
-		end
-		return true
-	end
-	if c:GetAttribute("ParrySpent") == true then return false end
-	if not c:FindFirstChild("Parrying Dagger") then return false end
+	if not c or not R.Parry then return false, "remote parry tidak ada" end
+	if c:GetAttribute("ParrySpent") == true or c:GetAttribute("Parry") == true then return false, "parry sedang aktif atau sudah terpakai" end
+	if c:GetAttribute("Knocked") == true or c:GetAttribute("IsHooked") == true or c:GetAttribute("IsCarried") == true then return false, "karakter tidak bisa bertindak" end
+	if not c:FindFirstChild("Parrying Dagger") then return false, "dagger tidak dipegang" end
 	return true
 end
 
@@ -1925,33 +1979,43 @@ local function parryUsed(c)
 	return c and (c:GetAttribute("Parry") == true or c:GetAttribute("ParrySpent") == true)
 end
 
+local apiDumped = false
 local function doParry(why)
 	if os.clock() - lastParry < CFG.PARRY_COOLDOWN then return end
-	if not parryReady() then return end
+	local ready, reason = parryReady()
+	if not ready then
+		diag("parry", "ditolak (" .. why .. "): " .. tostring(reason))
+		return
+	end
 	lastParry = os.clock()
 	local c = lp.Character
-	local method = nil
-	-- 1) tombol item bawaan game (jalur yang sama dengan pemain)
-	if VIM then
-		local ok = pcall(pressBinding, "item")
-		if ok then method = "tombol item" end
+	if CFG.PARRY_NATIVE then
+		local pressed = false
+		if VIM then pressed = pcall(pressBinding, "item") end
+		if not pressed then
+			local btn = findParryButton()
+			if btn then pressed = pressGui(btn) end
+		end
+		if pressed then
+			diag("parry", "lewat tombol bawaan (" .. why .. ")")
+			task.delay(0.2, function()
+				if not parryUsed(c) then fire(R.Parry, c) end
+			end)
+			return
+		end
 	end
-	-- 2) tombol dagger di layar
-	if not method and CFG.PARRY_USE_BUTTON then
-		local btn = findParryButton()
-		if btn and pressGui(btn) then method = "tombol layar" end
-	end
-	if method then
-		print("[VD] parry via " .. method .. " (" .. why .. ")")
-		task.delay(0.2, function()
-			if parryUsed(c) then return end
-			fire(R.Parry, c)
-			print("[VD] " .. method .. " tidak merespons, kirim remote")
-		end)
-	else
-		fire(R.Parry, c)
-		if CFG.PLAY_PARRY_ANIM then playAnimOnMe(CFG.PARRY_ANIM) end
-		print("[VD] parry via remote (" .. why .. ")")
+	-- jalur yang terbukti berfungsi: remote langsung, tanpa jeda
+	fire(R.Parry, c)
+	if CFG.PLAY_PARRY_ANIM then playAnimOnMe(CFG.PARRY_ANIM) end
+	print("[VD] parry via remote (" .. why .. ")")
+	diag("parry", "kirim remote (" .. why .. ")")
+	task.delay(0.25, function()
+		diag("parry", "hasil: Parry=" .. tostring(c and c:GetAttribute("Parry")) .. " ParrySpent=" .. tostring(c and c:GetAttribute("ParrySpent")))
+	end)
+	-- baca daftar fungsi pengendali dagger sekali saja, di luar jalur kritis (untuk menyamakan tombol di layar nanti)
+	if not apiDumped then
+		apiDumped = true
+		task.delay(1.5, function() pcall(findParryController) end)
 	end
 end
 
@@ -2058,11 +2122,13 @@ end
 -- ===== AUTO SKILL =====
 -- Tampilan: SkillCheckPromptGui.Check berisi Line (jarum) dan Goal (zona). Pengendali bawaan game menilai perfect
 -- kalau (Line.Rotation - Goal.Rotation) ada di sekitar 104 sampai 114 derajat saat tombol skill check ditekan.
--- Mode Perfect menekan tombol itu tepat di zona. Mode Instan menekan segera, lalu hasil yang bukan success
--- diubah jadi success saat dikirim game (lihat handler).
+-- Urutan menekan: tombol bawaan lewat VirtualInputManager, lalu kalau skill check masih tampil setelah 0.3 detik,
+-- ketuk lewat sambungan event script skill check. Semua langkah dan keadaan karakter dicatat ke VD_Diag.txt.
 local lastPress = 0
 local qtePressed = false
 local qteSeen, qteDelay = nil, 0
+local qteAnnounced = false
+local qteShownAt = 0
 local tapPrints = 0
 
 local function skillParts()
@@ -2073,7 +2139,12 @@ local function skillParts()
 	return {gui = g, check = check, line = check:FindFirstChild("Line"), goal = check:FindFirstChild("Goal")}
 end
 
--- cadangan kalau VirtualInputManager tidak ada: ketuk lewat sambungan event milik script skill check
+local function skillVisible()
+	local sp = skillParts()
+	return sp ~= nil and sp.gui.Enabled and sp.check.Visible
+end
+
+-- ketuk lewat sambungan event milik script skill check
 local function tapSkillCheck()
 	local sp = skillParts()
 	if not sp or not getconnections then return false end
@@ -2093,35 +2164,72 @@ local function tapSkillCheck()
 			if pcall(c.Fire, c, fake, false) then fired = true end
 		end
 	end
-	if tapPrints < 3 then
-		tapPrints = tapPrints + 1
-		print("[VD] ketuk skill check (cadangan): " .. (fired and "terkirim" or "tidak ada sambungan"))
-	end
 	return fired
 end
 
 local function pressSkill()
-	local pressed = false
+	qtePressed = true
+	lastPress = os.clock()
+	local how = "tidak ada"
 	if VIM then
 		local ok, name = pcall(pressBinding, "skillcheck")
-		if ok then pressed = true end
+		how = ok and ("vim:" .. tostring(name)) or "vim gagal"
 	end
-	if not pressed then pressed = tapSkillCheck() end
-	if pressed then
-		lastPress = os.clock()
-		qtePressed = true
+	diag("skill", "tekan lewat " .. how .. "; Line-Goal=" .. (function()
+		local sp = skillParts()
+		if sp and sp.line and sp.goal then return string.format("%.1f", (sp.line.Rotation - sp.goal.Rotation) % 360) end
+		return "?"
+	end)())
+	task.delay(0.3, function()
+		if not skillVisible() then
+			diag("skill", "skill check hilang dalam 0.3 detik setelah ditekan (berhasil diterima game)")
+			return
+		end
+		local fired = tapSkillCheck()
+		diag("skill", "skill check MASIH tampil 0.3 detik setelah ditekan; ketuk cadangan terkirim=" .. tostring(fired))
+		task.delay(0.5, function()
+			diag("skill", "setelah ketuk cadangan, skill check masih tampil=" .. tostring(skillVisible()))
+		end)
+	end)
+end
+
+local function announceSkill()
+	diag("skill", "skill check muncul; auto=" .. tostring(GUI:Get("auto_skill")) .. " mode=" .. tostring(GUI:Get("auto_skill_mode"))
+		.. " kb_skillcheck=" .. tostring(lp:GetAttribute("kb_skillcheck")))
+	local names, seen = {}, {}
+	for _, c in ipairs(connectionsOf(UIS.InputBegan)) do
+		local fn = nil
+		pcall(function() fn = c.Function end)
+		local n = fn and scriptNameOf(fn) or ""
+		if n ~= "" and not seen[n] then
+			seen[n] = true
+			names[#names + 1] = n
+		end
+	end
+	diag("skill", "pemegang UIS.InputBegan: " .. table.concat(names, " | "))
+	snapshotState("skill+0")
+	for _, dt in ipairs({0.6, 1.5, 3.0}) do
+		task.delay(dt, function() snapshotState("skill+" .. tostring(dt)) end)
 	end
 end
 
 local function qteStep()
-	if not GUI:Get("auto_skill") then qteSeen = nil; return end
 	local sp = skillParts()
-	local g = sp and sp.gui
-	if not (sp and g.Enabled and sp.check.Visible and sp.line and sp.goal) then
-		qteSeen = nil
-		qtePressed = false
+	local shown = sp ~= nil and sp.gui.Enabled and sp.check.Visible
+	if not shown then
+		if qteAnnounced then
+			diag("skill", string.format("skill check hilang setelah %.2f detik", os.clock() - qteShownAt))
+			snapshotState("skill-selesai")
+		end
+		qteAnnounced, qteSeen, qtePressed = false, nil, false
 		return
 	end
+	if not qteAnnounced then
+		qteAnnounced = true
+		qteShownAt = os.clock()
+		announceSkill() -- dicatat juga saat Auto Skill mati, sebagai pembanding
+	end
+	if not GUI:Get("auto_skill") or not (sp.line and sp.goal) then return end
 	local ch = lp.Character
 	local controller = ch and ch:FindFirstChild("CheckInterractable")
 	if not controller or not (controller:GetAttribute("isRepairing") or controller:GetAttribute("isHealing")) then return end
@@ -2178,9 +2286,11 @@ local function handler(rem, args)
 	-- Fast Vault: ubah tier vault jadi "fast", sama seperti urutan yang tercatat di log
 	if rem == R.Vault and GUI:Get("fast_vault") then
 		if args.n >= 5 and type(args[3]) == "string" and args[5] ~= "fast" then
+			local originalTier = args[5]
 			args[2] = true
 			args[5] = "fast"
 			vaultState = {guid = args[3], t = os.clock(), part = false}
+			diag("vault", "tier diubah ke fast (asli: " .. tostring(originalTier) .. ")")
 			vaultWindow = os.clock() + 2
 			task.delay(0.1, function()
 				if R.FastVault and vaultState then fire(R.FastVault, lp) end
@@ -2281,7 +2391,9 @@ local function restoreVaultTracks()
 	vaultTracks = {}
 end
 
--- percepat animasi vault lewat pengendali gerak asli (isVaulting dan activeVaultTrack)
+-- percepat animasi vault lewat pengendali gerak asli. Pengendali dicari sekali saat vault pertama dimulai
+-- (di luar jalur kritis); per frame hanya memakai hasil yang sudah ada, tanpa memindai memori.
+local vaultReported = false
 local function vaultSpeedStep()
 	if not GUI:Get("fast_vault") then
 		restoreVaultAttr()
@@ -2291,8 +2403,9 @@ local function vaultSpeedStep()
 	local ch = lp.Character
 	if not ch then return end
 	setVaultAttr(ch)
-	local mv = findMovement()
-	local track = mv and mv.isVaulting and mv.activeVaultTrack
+	local mv = moveCtl
+	if not mv or mv.character ~= ch then return end
+	local track = mv.isVaulting and mv.activeVaultTrack
 	if not track then return end
 	local playing = false
 	pcall(function() playing = track.IsPlaying end)
@@ -2300,18 +2413,18 @@ local function vaultSpeedStep()
 	local len = track.Length or (track.Track and track.Track.Length) or 1.5
 	local current = trackSpeedOf(track)
 	if type(current) ~= "number" then return end
-	local row = vaultTracks[track]
-	if not row then
-		row = {original = current}
-		vaultTracks[track] = row
-	end
+	if not vaultTracks[track] then vaultTracks[track] = {original = current} end
 	local target = math.clamp(len / CFG.FAST_VAULT_TIME, 1, CFG.FAST_VAULT_MAX_ANIM)
 	if current < target - 0.05 then
 		pcall(function() track:AdjustSpeed(target) end)
+		if not vaultReported then
+			vaultReported = true
+			diag("vault", string.format("kecepatan animasi vault dinaikkan %.2f -> %.2f (panjang %.2f)", current, target, len))
+		end
 	end
 end
 
--- percepat animasi vault milik sendiri (cadangan kalau pengendali gerak tidak ketemu) dan catat durasi vault
+-- cadangan: percepat animasi vault milik sendiri tanpa pengendali gerak, dan catat durasi tiap vault
 local vaultStartAt = nil
 local function boostVaultAnims(animator)
 	for _, tr in ipairs(animator:GetPlayingAnimationTracks()) do
@@ -2329,7 +2442,7 @@ local function hookMyAnimator(char)
 	if not animator or hooked[animator] then return end
 	hooked[animator] = true
 	connect(animator.AnimationPlayed, function(track)
-		if not GUI:Get("fast_vault") or moveCtl then return end
+		if not GUI:Get("fast_vault") then return end
 		if track.Looped or track.Length < 0.8 then return end
 		local prio = track.Priority
 		if prio == Enum.AnimationPriority.Core or prio == Enum.AnimationPriority.Idle or prio == Enum.AnimationPriority.Movement then return end
@@ -2341,22 +2454,25 @@ local function hookMyAnimator(char)
 	connect(char:GetAttributeChangedSignal("isvaulting"), function()
 		if char:GetAttribute("isvaulting") ~= true then
 			if vaultStartAt then
-				logLine("VD_VaultLog.txt", string.format("durasi vault %.2f detik, tier=%s, vaultspeed=%s, fast_vault=%s",
+				local line = string.format("durasi vault %.2f detik, tier=%s, vaultspeed=%s, fast_vault=%s",
 					os.clock() - vaultStartAt, tostring(char:GetAttribute("VaultTier")),
-					tostring(char:GetAttribute("vaultspeed")), tostring(GUI:Get("fast_vault"))))
+					tostring(char:GetAttribute("vaultspeed")), tostring(GUI:Get("fast_vault")))
+				logLine("VD_VaultLog.txt", line)
+				diag("vault", line)
 				vaultStartAt = nil
 			end
 			return
 		end
 		vaultStartAt = os.clock()
 		vaultWindow = os.clock() + 2
+		diag("vault", "vault mulai; fast_vault=" .. tostring(GUI:Get("fast_vault")) .. " pengendali=" .. tostring(moveCtl ~= nil)
+			.. " tier=" .. tostring(char:GetAttribute("VaultTier")) .. " vaultspeed=" .. tostring(char:GetAttribute("vaultspeed")))
+		if not moveCtl then task.spawn(function() pcall(findMovement) end) end
 		if not GUI:Get("fast_vault") then return end
-		if not moveCtl then
-			for _, dt in ipairs({0, 0.05, 0.15}) do
-				task.delay(dt, function()
-					if animator.Parent then boostVaultAnims(animator) end
-				end)
-			end
+		for _, dt in ipairs({0, 0.05, 0.15}) do
+			task.delay(dt, function()
+				if animator.Parent then boostVaultAnims(animator) end
+			end)
 		end
 		-- kalau hook remote tidak menangkap event vault, tetap kirim sinyal fast vault
 		if R.FastVault and not (vaultState and os.clock() - vaultState.t < 1.5) then
