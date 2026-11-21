@@ -1517,6 +1517,8 @@ if env.VD_SURV_CLEANUP then pcall(env.VD_SURV_CLEANUP) end
 -- ===== pengaturan =====
 local CFG = {
 	DIAG = true,               -- catat data diagnosa ke VD_Diag.txt (skill check, parry, vault)
+	PARRY_NATIVE_CALL = true,  -- panggil fungsi Parry() milik pengendali dagger asli (tombol dan cooldown ikut jalan)
+	SKILL_ALLOW_KEY = false,   -- tekan Space untuk skill check hanya di PC; di HP Space membatalkan repair dan mengunci gerak
 	PARRY_NATIVE = false,      -- jalur tombol item/tombol layar; belum terbukti di Delta, jadi mati. Parry lewat remote seperti semula
 	-- parry
 	MAX_DIST = 14,             -- jarak maksimum killer (tanpa Anti Fake Hit)
@@ -1534,9 +1536,9 @@ local CFG = {
 	PARRY_ANIM = "rbxassetid://109133187196613",
 	-- fast vault
 	FAST_ASSET = "rbxassetid://83873880822918",
-	FAST_VAULT_TIME = 0.62,    -- target durasi vault (detik); vault fast bawaan sekitar 0.6 detik
-	FAST_VAULT_MAX_ANIM = 3,   -- batas percepatan animasi
-	VAULT_ATTR = 1.5,          -- atribut vaultspeed minimum selama Fast Vault menyala (1 = tidak diubah)
+	FAST_VAULT_TIME = 0.45,    -- target durasi vault (detik); vault fast bawaan sekitar 0.6 detik
+	FAST_VAULT_MAX_ANIM = 4,   -- batas percepatan animasi
+	VAULT_ATTR = 2.0,          -- atribut vaultspeed minimum selama Fast Vault menyala (1 = tidak diubah)
 	-- auto skill
 	SKILL_WIN = {104, 114},    -- selisih Line dan Goal (derajat) yang dihitung perfect, dari pengendali bawaan game
 	SKILL_INSTAN = {0.05, 0.12}, -- mode Instan: jeda sejak skill check muncul sampai tombol ditekan (detik)
@@ -1737,6 +1739,19 @@ local function pressBinding(action)
 	return name
 end
 
+-- ketukan layar (bukan keyboard): di HP, Space dibaca sebagai lompat sehingga repair dibatalkan dan gerak terkunci
+local touchId = 91
+local function sendTouchTap()
+	if not VIM then error("VirtualInputManager tidak tersedia") end
+	local point = worldInputPoint()
+	if not point then error("tidak ada titik layar yang kosong", 0) end
+	VIM:SendTouchEvent(touchId, 0, point.X, point.Y)
+	task.delay(0.05, function()
+		pcall(function() VIM:SendTouchEvent(touchId, 2, point.X, point.Y) end)
+	end)
+	return point
+end
+
 -- ===== diagnosa: semua data dicatat ke VD_Diag.txt =====
 local CAS = game:GetService("ContextActionService")
 local diagCount = 0
@@ -1859,19 +1874,22 @@ local function scanGc(predicate)
 	return nil
 end
 
-local parryCtl, nextParryScan = nil, 0
+local parryCtl, nextParryScan, parryApiLogged = nil, 0, false
 local function findParryController()
 	local ch = lp.Character
 	if parryCtl and parryCtl.character == ch and parryCtl.tool and parryCtl.tool:IsDescendantOf(ch) then return parryCtl end
 	parryCtl = nil
 	if not ch or os.clock() < nextParryScan then return nil end
-	nextParryScan = os.clock() + 4
+	nextParryScan = os.clock() + 10
 	parryCtl = scanGc(function(t)
 		return rawget(t, "character") == ch and rawget(t, "parryEvent") ~= nil and rawget(t, "tool") ~= nil
 	end)
 	if parryCtl then
 		print("[VD] pengendali dagger asli ketemu")
-		dumpApi(parryCtl, "VD_ParryApi.txt")
+		if not parryApiLogged then
+			parryApiLogged = true
+			dumpApi(parryCtl, "VD_ParryApi.txt")
+		end
 	end
 	return parryCtl
 end
@@ -1882,11 +1900,24 @@ local function findMovement()
 	if moveCtl and moveCtl.character == ch then return moveCtl end
 	moveCtl = nil
 	if not ch or os.clock() < nextMoveScan then return nil end
-	nextMoveScan = os.clock() + 5
+	nextMoveScan = os.clock() + 10
 	moveCtl = scanGc(function(t)
 		return rawget(t, "character") == ch and rawget(t, "normalWalkSpeed") ~= nil and rawget(t, "_movement") ~= nil
 	end)
 	return moveCtl
+end
+
+-- pindai memori (getgc) hanya saat ronde aktif dan pengendalinya belum ada; hasilnya disimpan untuk dipakai berikutnya
+local function ensureControllers()
+	local c = lp.Character
+	if not c or c:GetAttribute("RoundScriptsActive") ~= true then return end
+	if GUI:Get("fast_vault") and not (moveCtl and moveCtl.character == c) and os.clock() >= nextMoveScan then
+		pcall(findMovement)
+	end
+	if GUI:Get("auto_parry") and CFG.PARRY_NATIVE_CALL and not (parryCtl and parryCtl.character == c)
+		and c:FindFirstChild("Parrying Dagger") and os.clock() >= nextParryScan then
+		pcall(findParryController)
+	end
 end
 
 -- ===== AUTO PARRY =====
@@ -1979,7 +2010,6 @@ local function parryUsed(c)
 	return c and (c:GetAttribute("Parry") == true or c:GetAttribute("ParrySpent") == true)
 end
 
-local apiDumped = false
 local function doParry(why)
 	if os.clock() - lastParry < CFG.PARRY_COOLDOWN then return end
 	local ready, reason = parryReady()
@@ -2004,7 +2034,26 @@ local function doParry(why)
 			return
 		end
 	end
-	-- jalur yang terbukti berfungsi: remote langsung, tanpa jeda
+	-- jalur utama: fungsi Parry() milik pengendali dagger asli, supaya tombol di layar ikut masuk cooldown
+	if CFG.PARRY_NATIVE_CALL and parryCtl and parryCtl.character == c and type(parryCtl.Parry) == "function" then
+		local ctl = parryCtl
+		local ok, err = pcall(ctl.Parry, ctl)
+		diag("parry", "ctl:Parry() ok=" .. tostring(ok) .. (ok and "" or (" err=" .. tostring(err))) .. " (" .. why .. ")")
+		if ok then
+			task.delay(0.07, function()
+				local used = ctl.isParryOnCooldown == true or ctl.isParryResolving == true or parryUsed(c)
+				if used then
+					diag("parry", "native diterima; cooldown=" .. tostring(ctl.isParryOnCooldown) .. " resolving=" .. tostring(ctl.isParryResolving))
+				else
+					fire(R.Parry, c)
+					if CFG.PLAY_PARRY_ANIM then playAnimOnMe(CFG.PARRY_ANIM) end
+					diag("parry", "native tidak mengubah status, kirim remote")
+				end
+			end)
+			return
+		end
+	end
+	-- cadangan yang terbukti berfungsi: remote langsung, tanpa jeda
 	fire(R.Parry, c)
 	if CFG.PLAY_PARRY_ANIM then playAnimOnMe(CFG.PARRY_ANIM) end
 	print("[VD] parry via remote (" .. why .. ")")
@@ -2012,11 +2061,6 @@ local function doParry(why)
 	task.delay(0.25, function()
 		diag("parry", "hasil: Parry=" .. tostring(c and c:GetAttribute("Parry")) .. " ParrySpent=" .. tostring(c and c:GetAttribute("ParrySpent")))
 	end)
-	-- baca daftar fungsi pengendali dagger sekali saja, di luar jalur kritis (untuk menyamakan tombol di layar nanti)
-	if not apiDumped then
-		apiDumped = true
-		task.delay(1.5, function() pcall(findParryController) end)
-	end
 end
 
 local function passesFilter(plr, kr, mr, d)
@@ -2160,7 +2204,7 @@ local function tapSkillCheck()
 	for _, c in ipairs(connectionsOf(UIS.InputBegan)) do
 		local fn = nil
 		pcall(function() fn = c.Function end)
-		if fn and hasWord(scriptNameOf(fn), {"skillcheck", "skill"}) then
+		if fn and hasWord(scriptNameOf(fn), {"skillcheck", "skill", "localscript"}) then
 			if pcall(c.Fire, c, fake, false) then fired = true end
 		end
 	end
@@ -2172,8 +2216,17 @@ local function pressSkill()
 	lastPress = os.clock()
 	local how = "tidak ada"
 	if VIM then
-		local ok, name = pcall(pressBinding, "skillcheck")
-		how = ok and ("vim:" .. tostring(name)) or "vim gagal"
+		if UIS.TouchEnabled then
+			local ok, err = pcall(sendTouchTap)
+			how = ok and "ketuk layar" or ("ketuk layar gagal: " .. tostring(err))
+			if not ok and CFG.SKILL_ALLOW_KEY then
+				local ok2, name = pcall(pressBinding, "skillcheck")
+				how = how .. "; " .. (ok2 and ("lalu tombol " .. tostring(name)) or "tombol gagal")
+			end
+		else
+			local ok, name = pcall(pressBinding, "skillcheck")
+			how = ok and ("tombol " .. tostring(name)) or "tombol gagal"
+		end
 	end
 	diag("skill", "tekan lewat " .. how .. "; Line-Goal=" .. (function()
 		local sp = skillParts()
@@ -2243,6 +2296,35 @@ local function qteStep()
 	else
 		local d = (sp.line.Rotation - sp.goal.Rotation) % 360
 		if d >= CFG.SKILL_WIN[1] and d <= CFG.SKILL_WIN[2] then pressSkill() end
+	end
+end
+
+-- pengaman: kalau setelah skill check repair sudah berhenti tapi WalkSpeed tertinggal 0 (gerak macet), pulihkan
+local stuckSince = nil
+local function unstickStep()
+	if not GUI:Get("auto_skill") or os.clock() - lastPress > 10 then
+		stuckSince = nil
+		return
+	end
+	local hum, ch, root = myHum(), myChar(), myRoot()
+	if not (hum and ch and root) then return end
+	local controller = ch:FindFirstChild("CheckInterractable")
+	local busy = controller and (controller:GetAttribute("isRepairing") or controller:GetAttribute("isHealing"))
+	local blocked = false
+	for _, k in ipairs({"Knocked", "IsHooked", "IsCarried", "IsStunned", "Immobile", "Rooted", "MovementLocked", "Trapped", "Chained"}) do
+		if ch:GetAttribute(k) == true then blocked = true end
+	end
+	if busy or blocked or root.Anchored or hum.WalkSpeed > 0.5 or skillVisible() then
+		stuckSince = nil
+		return
+	end
+	stuckSince = stuckSince or os.clock()
+	if os.clock() - stuckSince >= 0.4 then
+		local base = tonumber(ch:GetAttribute("Speed")) or 17
+		hum.WalkSpeed = base * (tonumber(ch:GetAttribute("speedboost")) or 1)
+		hum.AutoRotate = true
+		diag("skill", string.format("gerak macet terdeteksi setelah skill check, WalkSpeed dipulihkan ke %.1f", hum.WalkSpeed))
+		stuckSince = nil
 	end
 end
 
@@ -2672,12 +2754,14 @@ connect(RunService.Heartbeat, function(dt)
 	if GUI.Closed then return end
 	speedStep()
 	safe(vaultSpeedStep, "vault")
+	safe(unstickStep, "unstick")
 	acc = acc + dt
 	if acc >= 0.05 then
 		acc = 0
 		sample()
 		predictive()
 		crouchStep()
+		safe(ensureControllers, "kontrol")
 	end
 end)
 connect(RunService.RenderStepped, function()
