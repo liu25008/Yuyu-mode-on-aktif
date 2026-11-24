@@ -1495,15 +1495,14 @@ local CFG = {
 	FAST_VISUAL = true,
 	SKILL_CENTER = 109,
 	PARRY_NATIVE = false,
-	-- parry
-	MAX_DIST = 14,
-	FAKE_MAX_DIST = 11.5,
-	FAKE_INSTANT_DIST = 8.8,
-	FAKE_WATCH_DIST = 11.5,
-	FAKE_ENTER_DIST = 9.2,
+	-- parry (fake hit: 12-18 stud, facing maksimal 0.30)
+	MAX_DIST = 18,
+	FAKE_WATCH_MIN = 12.0,
+	FAKE_WATCH_MAX = 18.0,
+	FAKE_MAX_FACING = 0.30,
+	FAKE_ENTER_DIST = 12.0,
 	FAKE_WATCH_TIME = 0.34,
 	FAKE_CLOSING = 0.85,
-	FAKE_MIN_FACING = 0.25,
 	FAKE_OPENING = 0.85,
 	PRED_RANGE = 6.5,
 	PRED_FACING = 0.55,
@@ -2061,10 +2060,10 @@ local function logParrySkip(plr, kr, mr, d, reason)
 	local prev = distBefore(plr, 0.25)
 	local delta = (prev and d) and (d - prev) or 0
 	diag("parry-skip", string.format(
-		"killer=%s alasan=%s dist=%.2f (max=%.1f) facing=%.2f (min=%.2f) delta0.25=%.2f antiFake=%s",
+		"killer=%s alasan=%s dist=%.2f (watch=%.1f-%.1f) facing=%.2f (max=%.2f) delta0.25=%.2f antiFake=%s",
 		plr.Name, reason, d or -1,
-		GUI:Get("anti_fake_hit") and CFG.FAKE_WATCH_DIST or CFG.MAX_DIST,
-		facing, CFG.FAKE_MIN_FACING, delta, tostring(GUI:Get("anti_fake_hit"))
+		CFG.FAKE_WATCH_MIN, CFG.FAKE_WATCH_MAX,
+		facing, CFG.FAKE_MAX_FACING, delta, tostring(GUI:Get("anti_fake_hit"))
 	))
 end
 
@@ -2080,6 +2079,7 @@ local function watchLunge(plr, char, baseLabel)
 	pendingWatch[plr] = true
 	task.spawn(function()
 		local deadline = os.clock() + CFG.FAKE_WATCH_TIME
+		local lastReason = "fake_no_enter"
 		while os.clock() < deadline do
 			if not GUI:Get("auto_parry") or not GUI:Get("anti_fake_hit") then break end
 			local mr, kr = myRoot(), char and char:FindFirstChild("HumanoidRootPart")
@@ -2088,17 +2088,21 @@ local function watchLunge(plr, char, baseLabel)
 			local facing = facingOf(kr, mr)
 			local prev20 = distBefore(plr, 0.2)
 			local closing = prev20 and (prev20 - d) or 0
-			if d <= CFG.FAKE_ENTER_DIST and facing >= CFG.FAKE_MIN_FACING and closing >= CFG.FAKE_CLOSING then
+			if facing > CFG.FAKE_MAX_FACING then
+				lastReason = string.format("over_max_facing(%.2f>%.2f)", facing, CFG.FAKE_MAX_FACING)
+			elseif d <= CFG.FAKE_ENTER_DIST and closing >= CFG.FAKE_CLOSING then
 				pendingWatch[plr] = nil
 				doParry(baseLabel .. "-lunge")
 				return
+			else
+				lastReason = "fake_no_enter"
 			end
 			RunService.Heartbeat:Wait()
 		end
 		pendingWatch[plr] = nil
 		local mr, kr = myRoot(), char and char:FindFirstChild("HumanoidRootPart")
 		local d = (mr and kr) and (kr.Position - mr.Position).Magnitude or -1
-		logParrySkip(plr, kr, mr, d, "fake_no_enter")
+		logParrySkip(plr, kr, mr, d, lastReason)
 	end)
 end
 
@@ -2128,29 +2132,27 @@ local function onAttackAnim(plr, char, isWindup)
 		return
 	end
 
-	-- Jalur 1: dekat & cukup lurus -> langsung parry dengan cek mundur/menjauh
-	if d <= CFG.FAKE_INSTANT_DIST then
-		local facing = facingOf(kr, mr)
-		if facing < CFG.FAKE_MIN_FACING then
-			logParrySkip(plr, kr, mr, d, "low_facing")
-			return
-		end
-		local prev25 = distBefore(plr, 0.25)
-		if prev25 and (d - prev25) > CFG.FAKE_OPENING then
-			logParrySkip(plr, kr, mr, d, "opening_gap")
-			return
-		end
-		doParry(baseLabel)
+	-- Batas maksimal facing: 0.30 (nilai > 0.30 dianggap tidak memenuhi syarat)
+	local facing = facingOf(kr, mr)
+	if facing > CFG.FAKE_MAX_FACING then
+		logParrySkip(plr, kr, mr, d, string.format("over_max_facing(%.2f>%.2f)", facing, CFG.FAKE_MAX_FACING))
 		return
 	end
 
-	-- Jalur 2: jarak menengah (8.8 - 11.5 stud) -> pantau sebentar, parry hanya kalau menerjang masuk <= 9.2 stud
-	if d <= CFG.FAKE_WATCH_DIST then
+	-- Cek jarak menjauh
+	local prev25 = distBefore(plr, 0.25)
+	if prev25 and (d - prev25) > CFG.FAKE_OPENING then
+		logParrySkip(plr, kr, mr, d, "opening_gap")
+		return
+	end
+
+	-- Zona pantau / fake hit: 12 - 18 stud
+	if d >= CFG.FAKE_WATCH_MIN and d <= CFG.FAKE_WATCH_MAX then
 		watchLunge(plr, char, baseLabel)
 		return
 	end
 
-	logParrySkip(plr, kr, mr, d, "too_far")
+	logParrySkip(plr, kr, mr, d, d < CFG.FAKE_WATCH_MIN and "below_watch_min" or "above_watch_max")
 end
 
 local function learn(plr, track, id)
