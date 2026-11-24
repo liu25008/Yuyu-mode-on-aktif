@@ -1524,9 +1524,14 @@ local CFG = {
 	PARRY_NATIVE = false,      -- jalur tombol item/tombol layar; belum terbukti di Delta, jadi mati. Parry lewat remote seperti semula
 	-- parry
 	MAX_DIST = 14,             -- jarak maksimum killer (tanpa Anti Fake Hit)
-	FAKE_MAX_DIST = 11.5,      -- jarak maksimum (dengan Anti Fake Hit)
-	FAKE_MIN_FACING = 0.1,     -- killer harus menghadap ke arah lo (1 = lurus, 0 = menyamping)
-	FAKE_OPENING = 1.5,        -- abaikan kalau killer menjauh lebih dari ini dalam 0.25 detik
+	FAKE_MAX_DIST = 11.5,      -- batas jangkauan pantau (dengan Anti Fake Hit)
+	FAKE_INSTANT_DIST = 8.8,   -- jarak dekat untuk langsung parry saat ayunan mulai
+	FAKE_WATCH_DIST = 11.5,    -- batas jarak atas untuk memantau lunge/pendekatan killer
+	FAKE_ENTER_DIST = 9.0,     -- ambang jarak masuk saat killer dipantau
+	FAKE_WATCH_TIME = 0.32,    -- lama pemantauan lunge setelah animasi serangan muncul (detik)
+	FAKE_CLOSING = 1.2,        -- minimal jarak mendekat (stud) dalam 0.2 detik saat killer menerjang
+	FAKE_MIN_FACING = 0.45,    -- killer harus menghadap ke arah lo (1 = lurus, 0 = menyamping)
+	FAKE_OPENING = 0.5,        -- abaikan kalau killer menjauh lebih dari ini dalam 0.25 detik
 	PRED_RANGE = 6.5,          -- mode Prediktif: jarak killer
 	PRED_FACING = 0.6,
 	PRED_CLOSING = 0.6,        -- mode Prediktif: killer harus mendekat minimal sekian stud per 0.2 detik
@@ -1942,6 +1947,7 @@ end
 local lastParry, lastPred = 0, 0
 local lastWindup = {}
 local attackUntil = {}
+local pendingWatch = {}
 local seenNew = {}
 
 local function playAnimOnMe(assetId)
@@ -2099,14 +2105,49 @@ local function logParrySkip(plr, kr, mr, d, reason)
 	diag("parry-skip", string.format(
 		"killer=%s alasan=%s dist=%.2f (max=%.1f) facing=%.2f (min=%.2f) delta0.25=%.2f antiFake=%s",
 		plr.Name, reason, d or -1,
-		GUI:Get("anti_fake_hit") and CFG.FAKE_MAX_DIST or CFG.MAX_DIST,
+		GUI:Get("anti_fake_hit") and CFG.FAKE_WATCH_DIST or CFG.MAX_DIST,
 		facing, CFG.FAKE_MIN_FACING, delta, tostring(GUI:Get("anti_fake_hit"))
 	))
+end
+
+local function facingOf(kr, mr)
+	if not (kr and mr) then return 1 end
+	local toMe = mr.Position - kr.Position
+	if toMe.Magnitude <= 0.1 then return 1 end
+	return kr.CFrame.LookVector:Dot(toMe.Unit)
+end
+
+local function watchLunge(plr, char, baseLabel)
+	if pendingWatch[plr] then return end
+	pendingWatch[plr] = true
+	task.spawn(function()
+		local deadline = os.clock() + CFG.FAKE_WATCH_TIME
+		while os.clock() < deadline do
+			if not GUI:Get("auto_parry") or not GUI:Get("anti_fake_hit") then break end
+			local mr, kr = myRoot(), char and char:FindFirstChild("HumanoidRootPart")
+			if not (mr and kr and char.Parent) then break end
+			local d = (kr.Position - mr.Position).Magnitude
+			local facing = facingOf(kr, mr)
+			local prev20 = distBefore(plr, 0.2)
+			local closing = prev20 and (prev20 - d) or 0
+			if d <= CFG.FAKE_ENTER_DIST and facing >= CFG.FAKE_MIN_FACING and closing >= CFG.FAKE_CLOSING then
+				pendingWatch[plr] = nil
+				doParry(baseLabel .. "-lunge")
+				return
+			end
+			RunService.Heartbeat:Wait()
+		end
+		pendingWatch[plr] = nil
+		local mr, kr = myRoot(), char and char:FindFirstChild("HumanoidRootPart")
+		local d = (mr and kr) and (kr.Position - mr.Position).Magnitude or -1
+		logParrySkip(plr, kr, mr, d, "fake_no_enter")
+	end)
 end
 
 local function onAttackAnim(plr, char, isWindup)
 	if not GUI:Get("auto_parry") then return end
 	local now = os.clock()
+	local baseLabel = isWindup and "aba-aba" or "pukulan"
 	if isWindup then
 		lastWindup[plr] = now
 	elseif lastWindup[plr] and now - lastWindup[plr] < 1 then
@@ -2120,25 +2161,38 @@ local function onAttackAnim(plr, char, isWindup)
 	end
 	local d = (kr.Position - mr.Position).Magnitude
 	local strict = GUI:Get("anti_fake_hit")
-	local maxD = strict and CFG.FAKE_MAX_DIST or CFG.MAX_DIST
-	if d > maxD then
-		logParrySkip(plr, kr, mr, d, "too_far")
+	if not strict then
+		if d > CFG.MAX_DIST then
+			logParrySkip(plr, kr, mr, d, "too_far")
+			return
+		end
+		doParry(baseLabel)
 		return
 	end
-	if strict then
-		local toMe = mr.Position - kr.Position
-		local facing = toMe.Magnitude > 0.1 and kr.CFrame.LookVector:Dot(toMe.Unit) or 1
+
+	-- Jalur 1: dekat & cukup lurus -> langsung parry dengan cek mundur/menjauh
+	if d <= CFG.FAKE_INSTANT_DIST then
+		local facing = facingOf(kr, mr)
 		if facing < CFG.FAKE_MIN_FACING then
 			logParrySkip(plr, kr, mr, d, "low_facing")
 			return
 		end
-		local prev = distBefore(plr, 0.25)
-		if prev and (d - prev) > CFG.FAKE_OPENING then
+		local prev25 = distBefore(plr, 0.25)
+		if prev25 and (d - prev25) > CFG.FAKE_OPENING then
 			logParrySkip(plr, kr, mr, d, "opening_gap")
 			return
 		end
+		doParry(baseLabel)
+		return
 	end
-	doParry(isWindup and "aba-aba" or "pukulan")
+
+	-- Jalur 2: jarak menengah (8.8 - 11.5 stud) -> pantau sebentar, parry hanya kalau menerjang masuk <= 9.0 stud
+	if d <= CFG.FAKE_WATCH_DIST then
+		watchLunge(plr, char, baseLabel)
+		return
+	end
+
+	logParrySkip(plr, kr, mr, d, "too_far")
 end
 
 local function learn(plr, track, id)
