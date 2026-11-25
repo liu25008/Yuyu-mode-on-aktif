@@ -1498,7 +1498,7 @@ local CFG = {
 	-- parry (jarak wajar + facing menghadap ke survivor)
 	MAX_DIST = 18,
 	FAKE_WATCH_MIN = 12.0,
-	FAKE_WATCH_MAX = 18.0,
+	FAKE_WATCH_MAX = 30.0,
 	FAKE_MIN_FACING = 0.35,
 	FAKE_ENTER_DIST = 11.5,
 	FAKE_WATCH_TIME = 0.34,
@@ -2152,7 +2152,7 @@ local function onAttackAnim(plr, char, isWindup)
 		return
 	end
 
-	-- Zona pantau / fake hit: 12 - 18 stud
+	-- Zona pantau / fake hit: 12 - 30 stud
 	if d >= CFG.FAKE_WATCH_MIN and d <= CFG.FAKE_WATCH_MAX then
 		watchLunge(plr, char, baseLabel)
 		return
